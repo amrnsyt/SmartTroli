@@ -8,23 +8,23 @@ instruction ("Arahan Malas"). Handles mixed payment modes: physical cash advance
 digital/QR payments.
 
 ## Phase Roadmap
-- **Phase 1 (THIS BUILD — complete, no backend needed)**: People/ownership tags, cash-advance
-  wallet, payment-mode tracking, local settlement engine, Dynamic Scratchpad with a *local*
-  naive text parser (no AI yet), swipe gestures, offline-first PWA shell.
-- **Phase 2 (needs a Gemini API key + a Vercel serverless function)**: Replace the local
-  scratchpad parser with real Gemini 1.5 Flash text parsing — dedupes quantities, understands
-  local dialect item names, returns structured JSON. Requires `/api/parse-list.js` on Vercel
-  (Node serverless function, zero local build needed) with `GEMINI_API_KEY` set as a Vercel
-  environment variable — **never** expose the key in client-side code.
-- **Phase 3 (Gemini Vision)**: Photograph-a-receipt flow — `/api/match-receipt.js` sends the
-  image to Gemini Vision, cross-references abbreviated store text against the existing list,
+- **Phase 1 (complete)**: People/ownership tags, cash-advance wallet, payment-mode tracking,
+  local settlement engine, swipe gestures, offline-first PWA shell.
+- **Phase 2 (THIS BUILD — complete)**: Dynamic Scratchpad now calls real Gemini 1.5 Flash via
+  a Vercel serverless function (`/api/parse-list.js`). Dedupes duplicate items, understands
+  local dialect names, returns structured JSON. `GEMINI_API_KEY` lives as a Vercel environment
+  variable — never sent to or stored in the client. Automatic offline fallback: if the Gemini
+  call fails or times out (9s), the app silently falls back to the Phase 1 local regex parser
+  so it still works with poor supermarket signal. Skeleton pulse loader shown while parsing.
+- **Phase 3 (next — Gemini Vision)**: Photograph-a-receipt flow — `/api/match-receipt.js` sends
+  the image to Gemini Vision, cross-references abbreviated store text against the existing list,
   flags out-of-list items for ownership tagging and brand-substitution prompts.
-- **Phase 4 (polish)**: Skeleton/pulse loading states while Gemini responds, out-of-list item
-  popup tagging, 100%-buyer-discount and 5-cent-rounding automation tied directly to receipt
-  parsing (Phase 1 already has manual global discount/rounding hooks in the settlement math).
+- **Phase 4 (polish)**: out-of-list item popup tagging, 100%-buyer-discount and 5-cent-rounding
+  automation tied directly to receipt parsing (Phase 1 already has manual global
+  discount/rounding hooks in the settlement math; still needs a settings UI).
 
-**Blocker for Phase 2/3**: need a Gemini API key from the user, and confirmation they're happy
-setting a Vercel environment variable (done via the Vercel dashboard, not the phone file system).
+**Blocker for Phase 3**: none new — same Gemini API key works for Vision calls, just needs the
+new endpoint file and a client-side camera/file-input flow.
 
 ## Stack
 - Vanilla HTML5, Tailwind CSS (CDN), Modular Vanilla JS
@@ -34,17 +34,23 @@ setting a Vercel environment variable (done via the Vercel dashboard, not the ph
 
 ## File Structure
 ```
-/index.html         -> App shell: header (branding, mode toggle, Clear, progress rail,
-                        people chips, wallet actions, structured form OR scratchpad),
-                        scrollable list, sticky footer (totals + wallet widget),
-                        Person modal, Settlement modal, update-toast
-/app.js              -> State (items + people + adjustments), settlement engine,
-                        scratchpad parser, swipe-gesture handlers, render pipeline
-/manifest.json       -> unchanged from previous milestone
-/sw.js               -> CACHE_NAME bumped v3 -> v4 (index.html/app.js changed)
-/vercel.json         -> unchanged
-/icons/*.png         -> unchanged
-/CLAUDE_STATE.md     -> this file
+/index.html          -> App shell: header (branding, mode toggle, Clear, progress rail,
+                         people chips, wallet actions, structured form OR scratchpad w/
+                         skeleton loader), scrollable list, sticky footer (totals + wallet),
+                         Person modal, Settlement modal, update-toast
+/app.js               -> State (items + people + adjustments), settlement engine,
+                         Gemini API call w/ offline local-parser fallback, swipe gestures,
+                         render pipeline
+/api/parse-list.js    -> NEW. Vercel Node serverless function. Reads GEMINI_API_KEY from
+                         process.env, calls gemini-1.5-flash generateContent with a
+                         dedupe/parse prompt, returns {items:[{name,price}]} JSON.
+/manifest.json        -> unchanged
+/sw.js                -> CACHE_NAME bumped v4 -> v5 (index.html/app.js changed).
+                         Note: fetch handler already ignores non-GET requests, so POSTs to
+                         /api/parse-list bypass the Service Worker entirely — no SW change needed.
+/vercel.json          -> unchanged
+/icons/*.png          -> unchanged
+/CLAUDE_STATE.md      -> this file
 ```
 
 ## Data Model (Phase 1)
@@ -82,9 +88,10 @@ This mirrors the target UX exactly: a single plain-English instruction, not a le
 - [x] Offline-first PWA shell, manual SW update flow — retained from prior milestone
 
 ## Known Gaps / Next Steps
-1. **No AI yet.** Scratchpad parsing is a simple regex (expects price at end of each line) —
-   won't handle true dialect chaos or merged quantities the way Gemini would. This is Phase 2.
-2. **No receipt photo matching** — Phase 3, needs Gemini Vision + serverless function.
+1. **Receipt photo matching not built yet** — Phase 3, needs Gemini Vision + a new
+   `/api/match-receipt.js` endpoint plus a camera/file-input UI.
+2. Gemini errors surface via `alert()` only when falling back to local parsing — consider a
+   nicer inline banner instead of native alerts in a later polish pass.
 3. Global `Adjustments.discount` / `Adjustments.rounding` fields exist in state and are already
    wired into `cashInHand()`, but there is no UI to edit them yet — add a small settings row next.
 4. Shared-item cost is split evenly across *all* people including "Me" — no per-person custom
@@ -98,9 +105,18 @@ This mirrors the target UX exactly: a single plain-English instruction, not a le
 - Phase 2/3 will add a `/api/` folder — still zero local build; Vercel builds serverless
   functions automatically from `/api/*.js` on push, no `npm run dev` needed on-device.
 
+## Setup Required Before This Deploy Works
+1. In the Vercel dashboard → your SmartTroli project → Settings → Environment Variables:
+   add `GEMINI_API_KEY` = `<your key>`, scoped to Production (and Preview/Development if you
+   test there too).
+2. Redeploy (env var changes require a new deployment to take effect — pushing this commit
+   will trigger one anyway).
+3. Test: switch to Scratchpad mode, paste a messy list, tap "Parse into list" — you should see
+   the skeleton pulse briefly, then structured items appear.
+4. Test offline fallback: enable Airplane Mode, repeat step 3 — you should get the "Parsed
+   locally (offline mode)" alert instead of a hard failure.
+
 ## Next Prompt Should Confirm
-- Do you have a **Gemini API key** ready? If yes, next step is standing up `/api/parse-list.js`
-  as a Vercel serverless function (key stored as a Vercel env var) so the Scratchpad mode uses
-  real Gemini parsing instead of the local regex fallback.
-- Otherwise: continue polishing Phase 1 (discount/rounding UI, custom shared-split ratios,
-  nicer edit modal instead of `prompt()`).
+- Ready to build Phase 3 (receipt photo scanning via Gemini Vision)?
+- Or continue Phase 1/2 polish (discount/rounding settings UI, nicer non-native edit/alert UI,
+  custom shared-split ratios)?

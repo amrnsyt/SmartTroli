@@ -94,9 +94,17 @@
     <div id="scratchWrap" class="hidden mt-3">
       <textarea id="scratchText" rows="4" placeholder="Paste your messy WhatsApp list here — one item per line, price at the end. e.g.&#10;Ayam sekoq potong kecik 2 ekor 18&#10;Carrot 2 batang 3.50"
         class="w-full bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark"></textarea>
+
+      <!-- Skeleton pulse shown while Gemini parses -->
+      <div id="scratchSkeleton" class="hidden mt-2 space-y-2">
+        <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
+        <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
+        <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse w-2/3"></div>
+      </div>
+
       <div class="flex items-center justify-between mt-2">
-        <p class="text-[10px] text-troli-sub dark:text-troli-subdark">Local parsing for now — AI parsing coming soon</p>
-        <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform">Parse into list</button>
+        <p class="text-[10px] text-troli-sub dark:text-troli-subdark">✨ Gemini AI parsing — falls back to local parsing if offline</p>
+        <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform disabled:opacity-50">Parse into list</button>
       </div>
     </div>
   </header>

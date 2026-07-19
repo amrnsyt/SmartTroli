@@ -122,6 +122,7 @@ const el = {
   scratchWrap: document.getElementById('scratchWrap'),
   scratchText: document.getElementById('scratchText'),
   scratchParseBtn: document.getElementById('scratchParseBtn'),
+  scratchSkeleton: document.getElementById('scratchSkeleton'),
   structuredForm: document.getElementById('structuredFormWrap'),
   // modals
   personModal: document.getElementById('personModal'),
@@ -321,8 +322,8 @@ function parseScratchLine(line) {
   return { name, price };
 }
 
-el.scratchParseBtn.addEventListener('click', () => {
-  const lines = el.scratchText.value.split('\n').map(l => l.trim()).filter(Boolean);
+function localParseFallback(rawText) {
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
   const parsed = [];
   lines.forEach(line => {
     const p = parseScratchLine(line);
@@ -331,11 +332,71 @@ el.scratchParseBtn.addEventListener('click', () => {
       if (existing) existing.price += p.price; else parsed.push(p);
     }
   });
-  if (parsed.length === 0) { alert('Could not detect any "Item Name RM Price" lines. Try one item per line, price at the end.'); return; }
+  return parsed;
+}
+
+function setScratchLoading(isLoading) {
+  el.scratchParseBtn.disabled = isLoading;
+  el.scratchText.disabled = isLoading;
+  el.scratchSkeleton.classList.toggle('hidden', !isLoading);
+  el.scratchParseBtn.textContent = isLoading ? 'Parsing…' : 'Parse into list';
+}
+
+async function parseWithGemini(rawText) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 9000);
+  try {
+    const res = await fetch('/api/parse-list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: rawText }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error('Gemini API request failed');
+    const data = await res.json();
+    if (!Array.isArray(data.items)) throw new Error('Unexpected response shape');
+    return data.items;
+  } catch (err) {
+    clearTimeout(timeout);
+    throw err;
+  }
+}
+
+el.scratchParseBtn.addEventListener('click', async () => {
+  const rawText = el.scratchText.value;
+  if (!rawText.trim()) return;
+
+  setScratchLoading(true);
+  let parsed = [];
+  let usedFallback = false;
+
+  try {
+    parsed = await parseWithGemini(rawText);
+  } catch (err) {
+    // Offline or Gemini unavailable — fall back to local regex parser so the
+    // app keeps working with poor supermarket signal (offline-first requirement).
+    usedFallback = true;
+    parsed = localParseFallback(rawText);
+  }
+
+  setScratchLoading(false);
+
+  if (!parsed || parsed.length === 0) {
+    alert(usedFallback
+      ? 'No signal reached Gemini and the local parser could not detect any items either. Try one item per line with the price at the end.'
+      : 'Gemini could not detect any items in that text.');
+    return;
+  }
+
   parsed.forEach(p => State.addItem(p.name, p.price, 'me', 'cash'));
   el.scratchText.value = '';
   el.modeToggleBtn.click(); // switch back to structured view to review/edit
   renderAll();
+
+  if (usedFallback) {
+    alert('Parsed locally (offline mode) — Gemini AI parsing was unreachable, so basic line-parsing was used instead. Review the items below.');
+  }
 });
 
 // ---------- Init ----------

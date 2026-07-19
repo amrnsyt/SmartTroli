@@ -1,7 +1,9 @@
 // SmartTroli (KongsiTroli) — app.js
-// Phase 1: local-only shared-expense engine. No AI backend yet (see CLAUDE_STATE.md Phase 2/3).
+// Phase 1+2: shared-expense engine + Gemini-powered scratchpad parsing.
+// Items are captured QTY-FIRST (name + quantity), price is optional and filled in
+// at the shelf/checkout — this matches how real chaotic family lists actually start.
 
-const ITEMS_KEY = 'smarttroli_items_v2';
+const ITEMS_KEY = 'smarttroli_items_v3';
 const PEOPLE_KEY = 'smarttroli_people_v2';
 const ADJ_KEY = 'smarttroli_adjustments_v2';
 
@@ -10,7 +12,7 @@ const fmt = (n) => `RM ${(Math.round((n + Number.EPSILON) * 100) / 100).toFixed(
 
 // ---------- STATE ----------
 const State = {
-  items: [],       // { id, name, price, inTrolley, owner, paymentMode }
+  items: [],       // { id, name, qty, unit, price, inTrolley, owner, paymentMode }
   people: [],      // { id, name, isMe, cashAdvance }
   adjustments: { discount: 0, rounding: 0 },
 
@@ -26,8 +28,17 @@ const State = {
   savePeople() { localStorage.setItem(PEOPLE_KEY, JSON.stringify(this.people)); },
   saveAdj() { localStorage.setItem(ADJ_KEY, JSON.stringify(this.adjustments)); },
 
-  addItem(name, price, owner = 'me', paymentMode = 'cash') {
-    this.items.push({ id: uid(), name: name.trim(), price: parseFloat(price) || 0, inTrolley: false, owner, paymentMode });
+  addItem(name, price = 0, owner = 'me', paymentMode = 'cash', qty = 1, unit = '') {
+    this.items.push({
+      id: uid(),
+      name: name.trim(),
+      qty: parseFloat(qty) || 1,
+      unit: (unit || '').trim(),
+      price: parseFloat(price) || 0,
+      inTrolley: false,
+      owner,
+      paymentMode
+    });
     this.saveItems();
   },
   toggleItem(id) { const i = this.items.find(x => x.id === id); if (i) { i.inTrolley = !i.inTrolley; this.saveItems(); } },
@@ -103,6 +114,8 @@ const el = {
   form: document.getElementById('addForm'),
   name: document.getElementById('itemName'),
   price: document.getElementById('itemPrice'),
+  qty: document.getElementById('itemQty'),
+  unit: document.getElementById('itemUnit'),
   ownerSelect: document.getElementById('ownerSelect'),
   payToggle: document.getElementById('payToggle'),
   list: document.getElementById('itemList'),
@@ -132,8 +145,36 @@ const el = {
   personCancelBtn: document.getElementById('personCancelBtn'),
   settleModal: document.getElementById('settleModal'),
   settleBody: document.getElementById('settleBody'),
-  settleCloseBtn: document.getElementById('settleCloseBtn')
+  settleCloseBtn: document.getElementById('settleCloseBtn'),
+  editModal: document.getElementById('editModal'),
+  editName: document.getElementById('editName'),
+  editQty: document.getElementById('editQty'),
+  editUnit: document.getElementById('editUnit'),
+  editPrice: document.getElementById('editPrice'),
+  editOwnerSelect: document.getElementById('editOwnerSelect'),
+  editPayToggle: document.getElementById('editPayToggle'),
+  editSaveBtn: document.getElementById('editSaveBtn'),
+  editCancelBtn: document.getElementById('editCancelBtn'),
+  adjustBtn: document.getElementById('adjustBtn'),
+  adjustModal: document.getElementById('adjustModal'),
+  adjustDiscount: document.getElementById('adjustDiscount'),
+  adjustRounding: document.getElementById('adjustRounding'),
+  adjustSaveBtn: document.getElementById('adjustSaveBtn'),
+  adjustCancelBtn: document.getElementById('adjustCancelBtn'),
+  geminiDot: document.getElementById('geminiDot'),
+  geminiCheckBtn: document.getElementById('geminiCheckBtn'),
+  toastEl: document.getElementById('appToast'),
+  toastMsg: document.getElementById('appToastMsg')
 };
+
+let toastTimer = null;
+function toast(message, tone = 'info') {
+  el.toastMsg.textContent = message;
+  el.toastEl.classList.remove('hidden', 'bg-troli-ink', 'bg-troli-orange', 'bg-troli-green');
+  el.toastEl.classList.add(tone === 'error' ? 'bg-troli-orange' : tone === 'success' ? 'bg-troli-green' : 'bg-troli-ink');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.toastEl.classList.add('hidden'), 3800);
+}
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -190,17 +231,20 @@ function renderItem(item) {
     <div class="swipeRow bg-troli-card dark:bg-troli-carddark px-4 py-3 flex items-center gap-3 relative" style="transform: translateX(0px); transition: transform .18s ease;">
       <input type="checkbox" class="troli-check" ${item.inTrolley ? 'checked' : ''}>
       <div class="flex-1 min-w-0">
-        <p class="strike-anim text-sm font-medium truncate ${item.inTrolley ? 'line-through decoration-troli-green dark:decoration-troli-greenlight opacity-50' : ''}">${escapeHtml(item.name)}</p>
-        <p class="text-[11px] text-troli-sub dark:text-troli-subdark truncate">${escapeHtml(personName(item.owner === 'shared' ? null : item.owner) === 'Me' && item.owner === 'shared' ? 'Shared' : (item.owner === 'shared' ? 'Shared (Kongsi)' : personName(item.owner)))} · ${item.paymentMode === 'digital' ? 'Digital/QR' : 'Cash'}</p>
+        <p class="strike-anim text-sm font-medium truncate ${item.inTrolley ? 'line-through decoration-troli-green dark:decoration-troli-greenlight opacity-50' : ''}">
+          ${escapeHtml(item.name)}
+          ${(item.qty && item.qty !== 1) || item.unit ? `<span class="text-troli-orange font-normal">· ${item.qty}${item.unit ? ' ' + escapeHtml(item.unit) : 'x'}</span>` : ''}
+        </p>
+        <p class="text-[11px] text-troli-sub dark:text-troli-subdark truncate">${item.owner === 'shared' ? 'Shared (Kongsi)' : escapeHtml(personName(item.owner))} · ${item.paymentMode === 'digital' ? 'Digital/QR' : 'Cash'}</p>
       </div>
-      <span class="strike-anim text-sm font-display ${item.inTrolley ? 'line-through opacity-50' : ''}">${fmt(item.price)}</span>
+      <span class="strike-anim text-sm font-display ${item.inTrolley ? 'line-through opacity-50' : ''} ${item.price === 0 ? 'text-troli-orange' : ''}">${item.price === 0 ? 'Add price' : fmt(item.price)}</span>
     </div>
   `;
 
   const swipeRow = li.querySelector('.swipeRow');
   li.querySelector('.troli-check').addEventListener('change', () => { State.toggleItem(item.id); renderAll(); });
   li.querySelector('.delBtn').addEventListener('click', () => { State.removeItem(item.id); renderAll(); });
-  li.querySelector('.editBtn').addEventListener('click', () => openEditPrompt(item));
+  li.querySelector('.editBtn').addEventListener('click', () => openEditModal(item));
 
   // Swipe gestures
   let startX = 0, currentX = 0, dragging = false;
@@ -222,14 +266,44 @@ function renderItem(item) {
   return li;
 }
 
-function openEditPrompt(item) {
-  const newName = prompt('Item name', item.name);
-  if (newName === null) return;
-  const newPrice = prompt('Price (RM)', item.price);
-  if (newPrice === null) return;
-  State.updateItem(item.id, { name: newName.trim() || item.name, price: parseFloat(newPrice) || item.price });
-  renderAll();
+let editingId = null;
+
+function openEditModal(item) {
+  editingId = item.id;
+  el.editName.value = item.name;
+  el.editQty.value = item.qty || 1;
+  el.editUnit.value = item.unit || '';
+  el.editPrice.value = item.price || 0;
+  renderOwnerOptions(el.editOwnerSelect, item.owner);
+  el.editPayToggle.dataset.mode = item.paymentMode;
+  el.editPayToggle.textContent = item.paymentMode === 'digital' ? '📱 Digital' : '💵 Cash';
+  el.editModal.classList.remove('hidden');
 }
+
+el.editPayToggle.addEventListener('click', () => {
+  const isDigital = el.editPayToggle.dataset.mode === 'digital';
+  el.editPayToggle.dataset.mode = isDigital ? 'cash' : 'digital';
+  el.editPayToggle.textContent = isDigital ? '💵 Cash' : '📱 Digital';
+});
+
+el.editCancelBtn.addEventListener('click', () => { editingId = null; el.editModal.classList.add('hidden'); });
+
+el.editSaveBtn.addEventListener('click', () => {
+  if (!editingId) return;
+  const name = el.editName.value.trim();
+  if (!name) { toast('Item name cannot be empty', 'error'); return; }
+  State.updateItem(editingId, {
+    name,
+    qty: parseFloat(el.editQty.value) || 1,
+    unit: el.editUnit.value.trim(),
+    price: parseFloat(el.editPrice.value) || 0,
+    owner: el.editOwnerSelect.value,
+    paymentMode: el.editPayToggle.dataset.mode
+  });
+  editingId = null;
+  el.editModal.classList.add('hidden');
+  renderAll();
+});
 
 function renderAll() {
   el.list.innerHTML = '';
@@ -254,10 +328,13 @@ function renderAll() {
 el.form.addEventListener('submit', (e) => {
   e.preventDefault();
   const name = el.name.value.trim();
-  const price = el.price.value;
-  if (!name || price === '') return;
-  State.addItem(name, price, el.ownerSelect.value, el.payToggle.dataset.mode);
-  el.name.value = ''; el.price.value = ''; el.name.focus();
+  if (!name) return;
+  const price = el.price.value === '' ? 0 : el.price.value;
+  const qty = el.qty && el.qty.value !== '' ? el.qty.value : 1;
+  const unit = el.unit ? el.unit.value.trim() : '';
+  State.addItem(name, price, el.ownerSelect.value, el.payToggle.dataset.mode, qty, unit);
+  el.name.value = ''; el.price.value = ''; if (el.qty) el.qty.value = 1; if (el.unit) el.unit.value = '';
+  el.name.focus();
   renderAll();
 });
 
@@ -269,8 +346,49 @@ el.payToggle.addEventListener('click', () => {
 
 el.clearAllBtn.addEventListener('click', () => {
   if (State.items.length === 0) return;
-  if (confirm('Clear the entire list? This cannot be undone.')) { State.clearAll(); renderAll(); }
+  if (confirm('Clear the entire list? This cannot be undone.')) { State.clearAll(); renderAll(); toast('List cleared', 'info'); }
 });
+
+// ---------- Adjustments (discount / rounding) modal ----------
+el.adjustBtn.addEventListener('click', () => {
+  el.adjustDiscount.value = State.adjustments.discount || 0;
+  el.adjustRounding.value = State.adjustments.rounding || 0;
+  el.adjustModal.classList.remove('hidden');
+});
+el.adjustCancelBtn.addEventListener('click', () => el.adjustModal.classList.add('hidden'));
+el.adjustSaveBtn.addEventListener('click', () => {
+  State.adjustments = {
+    discount: parseFloat(el.adjustDiscount.value) || 0,
+    rounding: parseFloat(el.adjustRounding.value) || 0
+  };
+  State.saveAdj();
+  el.adjustModal.classList.add('hidden');
+  renderAll();
+  toast('Adjustments saved', 'success');
+});
+
+// ---------- Gemini connection check ----------
+async function checkGeminiConnection(silent = false) {
+  el.geminiDot.className = 'inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark animate-pulse';
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch('/api/health', { signal: controller.signal });
+    clearTimeout(timeout);
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      el.geminiDot.className = 'inline-block w-2 h-2 rounded-full bg-troli-green dark:bg-troli-greenlight';
+      if (!silent) toast('Gemini connection OK ✅', 'success');
+    } else {
+      el.geminiDot.className = 'inline-block w-2 h-2 rounded-full bg-troli-orange';
+      if (!silent) toast(data.message || 'Gemini connection failed', 'error');
+    }
+  } catch (err) {
+    el.geminiDot.className = 'inline-block w-2 h-2 rounded-full bg-troli-orange';
+    if (!silent) toast('Could not reach Gemini (offline or server error)', 'error');
+  }
+}
+el.geminiCheckBtn.addEventListener('click', () => checkGeminiConnection(false));
 
 // ---------- People modal ----------
 el.addPersonBtn.addEventListener('click', () => {
@@ -313,13 +431,41 @@ el.modeToggleBtn.addEventListener('click', () => {
   el.modeToggleBtn.textContent = showingScratch ? '📝 Scratchpad' : '📋 Structured';
 });
 
+// Qty-first local fallback parser (used when Gemini is unreachable).
+// Priority: 1) explicit RM price at end -> price-based item (qty=1)
+//           2) trailing "<number> <unit>" -> qty-based item (price=0, fill in later)
+//           3) no signal -> qty=1, price=0
+const UNIT_WORDS = 'ekor|batang|biji|ulas|ikat|kg|g|gram|ml|l|liter|pcs|pkt|pack|packet|bungkus|kotak|tin|botol|dozen|lusin';
+
 function parseScratchLine(line) {
-  const priceMatch = line.match(/(?:RM)?\s?(\d+(?:\.\d{1,2})?)\s*$/i);
-  if (!priceMatch) return null;
-  const price = parseFloat(priceMatch[1]);
-  const name = line.slice(0, priceMatch.index).replace(/[-–—:]+\s*$/, '').trim();
+  // 1) Explicit price at the end, e.g. "Milk 1L RM12.50" or "Milk 1L 12.50"
+  const priceMatch = line.match(/RM\s?(\d+(?:\.\d{1,2})?)\s*$/i);
+  if (priceMatch) {
+    const price = parseFloat(priceMatch[1]);
+    const name = line.slice(0, priceMatch.index).replace(/[-–—:]+\s*$/, '').trim();
+    if (name) return { name, price, qty: 1, unit: '' };
+  }
+
+  // 2) Trailing quantity + unit, e.g. "Ayam sekoq potong kecik 2 ekor" or "Carrot 2 batang"
+  const qtyMatch = line.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${UNIT_WORDS})\\.?\\s*$`, 'i'));
+  if (qtyMatch) {
+    const qty = parseFloat(qtyMatch[1]);
+    const unit = qtyMatch[2];
+    const name = line.slice(0, qtyMatch.index).replace(/[-–—:]+\s*$/, '').trim();
+    if (name) return { name, price: 0, qty, unit };
+  }
+
+  // 3) Bare trailing number with no unit and no RM/decimal — treat as quantity, not price
+  const bareNumMatch = line.match(/(\d+)\s*$/);
+  if (bareNumMatch && !line.match(/\.\d{1,2}\s*$/)) {
+    const qty = parseFloat(bareNumMatch[1]);
+    const name = line.slice(0, bareNumMatch.index).replace(/[-–—:]+\s*$/, '').trim();
+    if (name) return { name, price: 0, qty, unit: '' };
+  }
+
+  const name = line.trim();
   if (!name) return null;
-  return { name, price };
+  return { name, price: 0, qty: 1, unit: '' };
 }
 
 function localParseFallback(rawText) {
@@ -328,8 +474,9 @@ function localParseFallback(rawText) {
   lines.forEach(line => {
     const p = parseScratchLine(line);
     if (p) {
-      const existing = parsed.find(x => x.name.toLowerCase() === p.name.toLowerCase());
-      if (existing) existing.price += p.price; else parsed.push(p);
+      const existing = parsed.find(x => x.name.toLowerCase() === p.name.toLowerCase() && x.unit === p.unit);
+      if (existing) { existing.qty += p.qty; existing.price += p.price; }
+      else parsed.push(p);
     }
   });
   return parsed;
@@ -383,22 +530,26 @@ el.scratchParseBtn.addEventListener('click', async () => {
   setScratchLoading(false);
 
   if (!parsed || parsed.length === 0) {
-    alert(usedFallback
-      ? 'No signal reached Gemini and the local parser could not detect any items either. Try one item per line with the price at the end.'
-      : 'Gemini could not detect any items in that text.');
+    toast(usedFallback
+      ? 'No signal reached Gemini and local parsing found nothing. Try one item per line.'
+      : 'Gemini could not detect any items in that text.', 'error');
     return;
   }
 
-  parsed.forEach(p => State.addItem(p.name, p.price, 'me', 'cash'));
+  parsed.forEach(p => State.addItem(p.name, p.price || 0, 'me', 'cash', p.qty || 1, p.unit || ''));
   el.scratchText.value = '';
   el.modeToggleBtn.click(); // switch back to structured view to review/edit
   renderAll();
 
-  if (usedFallback) {
-    alert('Parsed locally (offline mode) — Gemini AI parsing was unreachable, so basic line-parsing was used instead. Review the items below.');
-  }
+  toast(
+    usedFallback
+      ? `Parsed locally (offline) — ${parsed.length} item(s) added by quantity. Add prices at the shelf.`
+      : `Gemini parsed ${parsed.length} item(s) by quantity — add prices as you shop.`,
+    usedFallback ? 'info' : 'success'
+  );
 });
 
 // ---------- Init ----------
 State.load();
 renderAll();
+checkGeminiConnection(true);

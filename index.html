@@ -71,7 +71,8 @@
     <!-- People chips + wallet -->
     <div class="mt-3 flex items-center gap-2 overflow-x-auto pb-1" id="peopleChips"></div>
     <div class="mt-2 flex items-center gap-2">
-      <button id="addPersonBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">+ Person / Cash Advance</button>
+      <button id="addPersonBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">+ Person</button>
+      <button id="adjustBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">⚙️ Adjust</button>
       <button id="settleBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-green dark:bg-troli-greenlight text-white rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0 ml-auto">Arahan Malas 🧮</button>
     </div>
 
@@ -80,8 +81,12 @@
       <form id="addForm" class="mt-3 flex flex-wrap gap-2">
         <input id="itemName" type="text" placeholder="Item name" required autocomplete="off"
           class="flex-1 min-w-[40%] bg-troli-card dark:bg-troli-carddark rounded-full px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-        <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM" required inputmode="decimal"
-          class="w-20 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+        <input id="itemQty" type="number" step="0.5" min="0" placeholder="Qty" value="1"
+          class="w-16 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+        <input id="itemUnit" type="text" placeholder="Unit" autocomplete="off"
+          class="w-16 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+        <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM (optional)" inputmode="decimal"
+          class="w-24 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
         <select id="ownerSelect" class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none"></select>
         <button id="payToggle" type="button" data-mode="cash"
           class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark shrink-0">💵 Cash</button>
@@ -92,7 +97,7 @@
 
     <!-- Dynamic Scratchpad -->
     <div id="scratchWrap" class="hidden mt-3">
-      <textarea id="scratchText" rows="4" placeholder="Paste your messy WhatsApp list here — one item per line, price at the end. e.g.&#10;Ayam sekoq potong kecik 2 ekor 18&#10;Carrot 2 batang 3.50"
+      <textarea id="scratchText" rows="4" placeholder="Paste your messy WhatsApp list here — one item per line. Quantity is enough, price is optional. e.g.&#10;Ayam sekoq potong kecik 2 ekor&#10;Carrot 2 batang&#10;Milk 1L RM12.50"
         class="w-full bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark"></textarea>
 
       <!-- Skeleton pulse shown while Gemini parses -->
@@ -103,9 +108,13 @@
       </div>
 
       <div class="flex items-center justify-between mt-2">
-        <p class="text-[10px] text-troli-sub dark:text-troli-subdark">✨ Gemini AI parsing — falls back to local parsing if offline</p>
+        <button id="geminiCheckBtn" type="button" class="flex items-center gap-1.5 text-[10px] text-troli-sub dark:text-troli-subdark">
+          <span id="geminiDot" class="inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark"></span>
+          ✨ Gemini · tap to check connection
+        </button>
         <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform disabled:opacity-50">Parse into list</button>
       </div>
+      <p class="text-[10px] text-troli-sub dark:text-troli-subdark mt-1">Items are captured by quantity first — add prices as you shop. Falls back to local parsing if offline.</p>
     </div>
   </header>
 
@@ -168,6 +177,48 @@
       <div id="settleBody"></div>
       <button id="settleCloseBtn" type="button" class="w-full mt-4 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Close</button>
     </div>
+  </div>
+
+  <!-- Edit Item Modal -->
+  <div id="editModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
+      <h3 class="font-display text-lg mb-3">Edit Item</h3>
+      <input id="editName" type="text" placeholder="Item name" class="w-full mb-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <div class="flex gap-2 mb-2">
+        <input id="editQty" type="number" step="0.5" min="0" placeholder="Qty" class="w-1/2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+        <input id="editUnit" type="text" placeholder="Unit (e.g. ekor)" class="w-1/2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      </div>
+      <input id="editPrice" type="number" step="0.01" min="0" placeholder="Price (RM)" class="w-full mb-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <div class="flex gap-2 mb-4">
+        <select id="editOwnerSelect" class="flex-1 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none"></select>
+        <button id="editPayToggle" type="button" data-mode="cash" class="bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark shrink-0">💵 Cash</button>
+      </div>
+      <div class="flex gap-2">
+        <button id="editCancelBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
+        <button id="editSaveBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 bg-troli-green dark:bg-troli-greenlight text-white font-semibold">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Adjustments Modal (discount / rounding) -->
+  <div id="adjustModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
+      <h3 class="font-display text-lg mb-1">Adjustments</h3>
+      <p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-3">Membership discounts and 5-cent rounding are split evenly across everyone (Shared/Kongsi bucket).</p>
+      <label class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">Total discount (RM)</label>
+      <input id="adjustDiscount" type="number" step="0.01" class="w-full mb-3 mt-1 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <label class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">Rounding adjustment (RM, +/-)</label>
+      <input id="adjustRounding" type="number" step="0.01" class="w-full mb-4 mt-1 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <div class="flex gap-2">
+        <button id="adjustCancelBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
+        <button id="adjustSaveBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 bg-troli-green dark:bg-troli-greenlight text-white font-semibold">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generic Toast (replaces native alert()) -->
+  <div id="appToast" class="hidden fixed bottom-24 left-4 right-4 z-50">
+    <div class="max-w-md mx-auto bg-troli-ink text-white rounded-2xl px-4 py-3 shadow-lg text-sm" id="appToastMsg"></div>
   </div>
 
   <!-- Update Toast -->

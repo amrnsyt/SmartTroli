@@ -1,6 +1,6 @@
 // SmartTroli — sw.js
 // Bump CACHE_NAME on every deploy that changes cached assets.
-const CACHE_NAME = 'smarttroli-cache-v3';
+const CACHE_NAME = 'smarttroli-cache-v4';
 const CORE_ASSETS = [
   '/',
   '/index.html',

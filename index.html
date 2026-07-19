@@ -3,60 +3,34 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
-<title>SmartTroli — Shopping List</title>
-<meta name="description" content="Track grocery items and live trolley totals as you shop — offline-ready, in RM.">
+<title>SmartTroli — Shared Shopping & Settlement</title>
+<meta name="description" content="Track grocery items, split costs with family, and settle up in one tap — offline-ready, in RM.">
 <meta name="theme-color" content="#2F5233">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛒</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
-  tailwind.config = {
-    theme: {
-      extend: {
-        colors: {
-          troli: {
-            bg: '#F6F4EE',
-            bgdark: '#14170F',
-            card: '#FFFFFF',
-            carddark: '#1E2317',
-            green: '#2F5233',
-            greenlight: '#4C7A3F',
-            rail: '#DDD8C6',
-            raildark: '#2A3021',
-            orange: '#D9622B',
-            ink: '#1B1F16',
-            inkdark: '#EDEAE0',
-            sub: '#6B7060',
-            subdark: '#9BA28A'
-          }
-        },
-        fontFamily: {
-          display: ['Georgia', 'ui-serif', 'serif'],
-          body: ['-apple-system', 'system-ui', 'sans-serif']
-        }
+  tailwind.config = { theme: { extend: {
+    colors: {
+      troli: {
+        bg: '#F6F4EE', bgdark: '#14170F', card: '#FFFFFF', carddark: '#1E2317',
+        green: '#2F5233', greenlight: '#4C7A3F', rail: '#DDD8C6', raildark: '#2A3021',
+        orange: '#D9622B', ink: '#1B1F16', inkdark: '#EDEAE0', sub: '#6B7060', subdark: '#9BA28A'
       }
-    }
-  }
+    },
+    fontFamily: { display: ['Georgia', 'ui-serif', 'serif'], body: ['-apple-system', 'system-ui', 'sans-serif'] }
+  } } }
 </script>
 <style>
   html, body { height: 100%; }
   .strike-anim { transition: opacity .25s ease, text-decoration-color .25s ease; }
   ::-webkit-scrollbar { width: 0px; }
   input[type="checkbox"].troli-check {
-    appearance: none;
-    width: 26px; height: 26px;
-    border: 2px solid #4C7A3F;
-    border-radius: 50%;
-    display: grid;
-    place-content: center;
-    flex-shrink: 0;
-    cursor: pointer;
+    appearance: none; width: 26px; height: 26px; border: 2px solid #4C7A3F; border-radius: 50%;
+    display: grid; place-content: center; flex-shrink: 0; cursor: pointer;
   }
   input[type="checkbox"].troli-check::before {
-    content: "";
-    width: 12px; height: 12px;
-    transform: scale(0);
-    transition: transform .15s ease-in-out;
+    content: ""; width: 12px; height: 12px; transform: scale(0); transition: transform .15s ease-in-out;
     box-shadow: inset 1em 1em #2F5233;
     clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
   }
@@ -67,18 +41,20 @@
 </head>
 <body class="bg-troli-bg dark:bg-troli-bgdark font-body text-troli-ink dark:text-troli-inkdark h-screen flex flex-col overflow-hidden transition-colors">
 
-  <!-- STICKY TOP: Header + Branding + Clear All -->
+  <!-- STICKY TOP -->
   <header class="shrink-0 px-5 pt-6 pb-3 bg-troli-bg/95 dark:bg-troli-bgdark/95 backdrop-blur-sm border-b border-troli-rail dark:border-troli-raildark z-20">
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="w-11 h-11 rounded-full bg-troli-green dark:bg-troli-greenlight flex items-center justify-center text-xl shrink-0">🛒</div>
         <div>
           <h1 class="font-display text-2xl leading-tight tracking-tight text-troli-green dark:text-troli-inkdark">SmartTroli</h1>
-          <p class="text-[11px] text-troli-sub dark:text-troli-subdark tracking-wide uppercase">Shop smart, spend sure</p>
+          <p class="text-[11px] text-troli-sub dark:text-troli-subdark tracking-wide uppercase">Kongsi Troli · Shop, split, settle</p>
         </div>
       </div>
-      <button id="clearAllBtn" type="button"
-        class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">Clear All</button>
+      <div class="flex items-center gap-2">
+        <button id="modeToggleBtn" type="button" class="text-[11px] uppercase tracking-wider text-troli-green dark:text-troli-greenlight border border-troli-green/30 dark:border-troli-greenlight/30 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">📝 Scratchpad</button>
+        <button id="clearAllBtn" type="button" class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">Clear</button>
+      </div>
     </div>
 
     <!-- Trolley Rail progress -->
@@ -92,99 +68,133 @@
       </div>
     </div>
 
-    <!-- Add Item Form -->
-    <form id="addForm" class="mt-3 flex gap-2">
-      <input id="itemName" type="text" placeholder="Item name" required autocomplete="off"
-        class="flex-1 min-w-0 bg-troli-card dark:bg-troli-carddark rounded-full px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-      <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM Price" required inputmode="decimal"
-        class="w-24 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-      <button type="submit"
-        class="w-11 h-11 rounded-full bg-troli-orange text-white text-xl leading-none flex items-center justify-center shadow-sm active:scale-95 transition-transform shrink-0">+</button>
-    </form>
+    <!-- People chips + wallet -->
+    <div class="mt-3 flex items-center gap-2 overflow-x-auto pb-1" id="peopleChips"></div>
+    <div class="mt-2 flex items-center gap-2">
+      <button id="addPersonBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">+ Person / Cash Advance</button>
+      <button id="settleBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-green dark:bg-troli-greenlight text-white rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0 ml-auto">Arahan Malas 🧮</button>
+    </div>
+
+    <!-- Structured Add Form -->
+    <div id="structuredFormWrap">
+      <form id="addForm" class="mt-3 flex flex-wrap gap-2">
+        <input id="itemName" type="text" placeholder="Item name" required autocomplete="off"
+          class="flex-1 min-w-[40%] bg-troli-card dark:bg-troli-carddark rounded-full px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+        <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM" required inputmode="decimal"
+          class="w-20 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+        <select id="ownerSelect" class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none"></select>
+        <button id="payToggle" type="button" data-mode="cash"
+          class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark shrink-0">💵 Cash</button>
+        <button type="submit"
+          class="w-11 h-11 rounded-full bg-troli-orange text-white text-xl leading-none flex items-center justify-center shadow-sm active:scale-95 transition-transform shrink-0">+</button>
+      </form>
+    </div>
+
+    <!-- Dynamic Scratchpad -->
+    <div id="scratchWrap" class="hidden mt-3">
+      <textarea id="scratchText" rows="4" placeholder="Paste your messy WhatsApp list here — one item per line, price at the end. e.g.&#10;Ayam sekoq potong kecik 2 ekor 18&#10;Carrot 2 batang 3.50"
+        class="w-full bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark"></textarea>
+      <div class="flex items-center justify-between mt-2">
+        <p class="text-[10px] text-troli-sub dark:text-troli-subdark">Local parsing for now — AI parsing coming soon</p>
+        <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform">Parse into list</button>
+      </div>
+    </div>
   </header>
 
-  <!-- SCROLLABLE CENTER: Grocery list -->
+  <!-- SCROLLABLE CENTER -->
   <main class="flex-1 overflow-y-auto px-5 py-4">
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">Your list</h2>
       <span id="itemCount" class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0 items</span>
     </div>
-
     <ul id="itemList" class="space-y-2"></ul>
-
     <div id="emptyState" class="text-center py-16">
       <div class="text-4xl mb-2">🥬</div>
       <p class="text-sm text-troli-sub dark:text-troli-subdark">Your trolley is empty.<br>Add your first item above!</p>
+      <p class="text-[11px] text-troli-sub dark:text-troli-subdark mt-3">Tip: swipe an item right to check it off, swipe left to edit or delete.</p>
     </div>
   </main>
 
-  <!-- STICKY BOTTOM: Dual real-time totals -->
-  <footer class="shrink-0 px-5 py-4 bg-troli-card dark:bg-troli-carddark border-t border-troli-rail dark:border-troli-raildark grid grid-cols-2 gap-3 z-20" style="padding-bottom: max(1rem, env(safe-area-inset-bottom));">
-    <div>
-      <p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">Total Estimated Price</p>
-      <p id="estTotal" class="font-display text-xl text-troli-ink dark:text-troli-inkdark">RM 0.00</p>
+  <!-- STICKY BOTTOM -->
+  <footer class="shrink-0 px-5 py-3 bg-troli-card dark:bg-troli-carddark border-t border-troli-rail dark:border-troli-raildark z-20" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));">
+    <div class="grid grid-cols-2 gap-3 mb-2">
+      <div>
+        <p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">Total Estimated</p>
+        <p id="estTotal" class="font-display text-xl text-troli-ink dark:text-troli-inkdark">RM 0.00</p>
+      </div>
+      <div class="text-right">
+        <p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">Trolley Total</p>
+        <p id="troliTotal" class="font-display text-xl text-troli-green dark:text-troli-greenlight">RM 0.00</p>
+      </div>
     </div>
-    <div class="text-right">
-      <p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">Trolley Total</p>
-      <p id="troliTotal" class="font-display text-xl text-troli-green dark:text-troli-greenlight">RM 0.00</p>
+    <div class="grid grid-cols-2 gap-3 pt-2 border-t border-troli-rail dark:border-troli-raildark">
+      <div>
+        <p class="text-[10px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">💵 Cash in hand</p>
+        <p id="cashInHand" class="text-sm font-semibold">RM 0.00</p>
+      </div>
+      <div class="text-right">
+        <p class="text-[10px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">📱 Digital advanced</p>
+        <p id="digitalOwed" class="text-sm font-semibold">RM 0.00</p>
+      </div>
     </div>
   </footer>
 
-  <!-- Update Toast (SW update banner) -->
+  <!-- Person Modal -->
+  <div id="personModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
+      <h3 class="font-display text-lg mb-3">Add Family Member</h3>
+      <input id="personName" type="text" placeholder="Name (e.g. Abah)" class="w-full mb-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <input id="personCash" type="number" step="0.01" min="0" placeholder="Cash advance given (RM)" class="w-full mb-4 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <div class="flex gap-2">
+        <button id="personCancelBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
+        <button id="personSaveBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 bg-troli-green dark:bg-troli-greenlight text-white font-semibold">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settlement Modal -->
+  <div id="settleModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5 max-h-[80vh] overflow-y-auto">
+      <h3 class="font-display text-lg mb-1">Arahan Malas</h3>
+      <p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-4">One clear instruction per person — no spreadsheets.</p>
+      <div id="settleBody"></div>
+      <button id="settleCloseBtn" type="button" class="w-full mt-4 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Close</button>
+    </div>
+  </div>
+
+  <!-- Update Toast -->
   <div id="updateToast" class="hidden fixed bottom-24 left-4 right-4 z-50">
     <div class="max-w-md mx-auto bg-troli-ink dark:bg-troli-carddark text-white rounded-2xl px-4 py-3 shadow-lg flex items-center justify-between gap-3 border border-white/10">
       <span class="text-sm">New version available!</span>
-      <button id="updateRefreshBtn" type="button"
-        class="text-sm font-semibold bg-troli-orange text-white rounded-full px-4 py-1.5 active:scale-95 transition-transform shrink-0">Update Now</button>
+      <button id="updateRefreshBtn" type="button" class="text-sm font-semibold bg-troli-orange text-white rounded-full px-4 py-1.5 active:scale-95 transition-transform shrink-0">Update Now</button>
     </div>
   </div>
 
   <script src="/app.js" defer></script>
   <script>
     let waitingWorker = null;
-
-    function showUpdateToast(worker) {
-      waitingWorker = worker;
-      document.getElementById('updateToast').classList.remove('hidden');
-    }
-
+    function showUpdateToast(worker) { waitingWorker = worker; document.getElementById('updateToast').classList.remove('hidden'); }
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js').then((reg) => {
-          // A worker is already waiting when this page loads.
-          if (reg.waiting) {
-            showUpdateToast(reg.waiting);
-          }
-
-          // A new worker starts installing during this session.
+          if (reg.waiting) showUpdateToast(reg.waiting);
           reg.addEventListener('updatefound', () => {
             const newWorker = reg.installing;
             if (!newWorker) return;
             newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                showUpdateToast(newWorker);
-              }
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) showUpdateToast(newWorker);
             });
           });
-
-          // Poll for new deploys so long-open tabs (common mid-shopping) notice updates.
           setInterval(() => reg.update(), 60 * 1000);
         }).catch(() => {});
-
-        // Reload once the new worker has taken control.
         let refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
-          if (refreshing) return;
-          refreshing = true;
-          window.location.reload();
+          if (refreshing) return; refreshing = true; window.location.reload();
         });
       });
     }
-
     document.getElementById('updateRefreshBtn').addEventListener('click', () => {
-      if (waitingWorker) {
-        waitingWorker.postMessage('skipWaiting');
-      }
+      if (waitingWorker) waitingWorker.postMessage('skipWaiting');
       document.getElementById('updateToast').classList.add('hidden');
     });
   </script>

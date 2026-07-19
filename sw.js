@@ -1,20 +1,21 @@
 // SmartTroli — sw.js
 // Bump CACHE_NAME on every deploy that changes cached assets.
-const CACHE_NAME = 'smarttroli-cache-v2';
+const CACHE_NAME = 'smarttroli-cache-v3';
 const CORE_ASSETS = [
-  './index.html',
-  './app.js',
-  './manifest.json'
+  '/',
+  '/index.html',
+  '/app.js',
+  '/manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS))
   );
-  // NOTE: skipWaiting() is intentionally NOT called here.
+  // skipWaiting() is intentionally NOT auto-called here.
   // The new worker enters "waiting" state so index.html can detect it
-  // and show the "New update available" banner. Activation only happens
-  // after the user taps Refresh, which sends a SKIP_WAITING message below.
+  // and show the "New version available" banner. Activation only happens
+  // after the user taps "Update Now", which sends the skipWaiting message below.
 });
 
 self.addEventListener('activate', (event) => {
@@ -28,48 +29,34 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Listen for the manual skip-waiting trigger from index.html's Refresh button.
+// Manual update trigger from index.html's "Update Now" button.
 self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING' || (event.data && event.data.type === 'SKIP_WAITING')) {
+  if (event.data === 'skipWaiting' || (event.data && event.data.type === 'skipWaiting')) {
     self.skipWaiting();
   }
 });
 
+// Stale-while-revalidate: serve from cache instantly (works in low-signal
+// supermarket aisles), then refresh the cache in the background from network
+// so the next load is up to date.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
-  // Network-first for HTML so updated markup isn't stuck behind stale cache.
-  const isHTML = event.request.mode === 'navigate' ||
-    (event.request.headers.get('accept') || '').includes('text/html');
-
-  if (isHTML) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-          return response;
-        })
-        .catch(() => caches.match(event.request).then((cached) => cached || caches.match('./index.html')))
-    );
-    return;
-  }
-
-  // Cache-first for other core assets, falling back to network.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.match(event.request).then((cachedResponse) => {
+        const networkFetch = fetch(event.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200 && networkResponse.type !== 'opaque') {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          })
+          .catch(() => cachedResponse || caches.match('/index.html'));
 
-      return fetch(event.request)
-        .then((response) => {
-          if (!response || response.status !== 200 || response.type === 'opaque') {
-            return response;
-          }
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-          return response;
-        })
-        .catch(() => caches.match('./index.html'));
-    })
+        // Return cached copy immediately if we have one; otherwise wait on network.
+        return cachedResponse || networkFetch;
+      })
+    )
   );
 });

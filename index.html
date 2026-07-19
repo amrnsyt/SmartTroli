@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
 <title>SmartTroli — Shopping List</title>
-<meta name="description" content="Track grocery items and live trolley totals as you shop.">
+<meta name="description" content="Track grocery items and live trolley totals as you shop — offline-ready, in RM.">
 <meta name="theme-color" content="#2F5233">
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛒</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
@@ -39,9 +39,7 @@
   }
 </script>
 <style>
-  @media (prefers-color-scheme: dark) {
-    body { background-color: #14170F; }
-  }
+  html, body { height: 100%; }
   .strike-anim { transition: opacity .25s ease, text-decoration-color .25s ease; }
   ::-webkit-scrollbar { width: 0px; }
   input[type="checkbox"].troli-check {
@@ -67,84 +65,81 @@
   .dark input[type="checkbox"].troli-check::before { box-shadow: inset 1em 1em #7FA96B; }
 </style>
 </head>
-<body class="bg-troli-bg dark:bg-troli-bgdark font-body text-troli-ink dark:text-troli-inkdark min-h-screen pb-10 transition-colors">
+<body class="bg-troli-bg dark:bg-troli-bgdark font-body text-troli-ink dark:text-troli-inkdark h-screen flex flex-col overflow-hidden transition-colors">
 
-  <!-- Header -->
-  <header class="px-5 pt-8 pb-4 sticky top-0 z-20 bg-troli-bg/90 dark:bg-troli-bgdark/90 backdrop-blur-sm border-b border-troli-rail dark:border-troli-raildark">
+  <!-- STICKY TOP: Header + Branding + Clear All -->
+  <header class="shrink-0 px-5 pt-6 pb-3 bg-troli-bg/95 dark:bg-troli-bgdark/95 backdrop-blur-sm border-b border-troli-rail dark:border-troli-raildark z-20">
     <div class="flex items-center justify-between">
-      <div>
-        <h1 class="font-display text-3xl tracking-tight text-troli-green dark:text-troli-inkdark">SmartTroli</h1>
-        <p class="text-xs text-troli-sub dark:text-troli-subdark mt-0.5 tracking-wide uppercase">Shop smart, spend sure</p>
+      <div class="flex items-center gap-3">
+        <div class="w-11 h-11 rounded-full bg-troli-green dark:bg-troli-greenlight flex items-center justify-center text-xl shrink-0">🛒</div>
+        <div>
+          <h1 class="font-display text-2xl leading-tight tracking-tight text-troli-green dark:text-troli-inkdark">SmartTroli</h1>
+          <p class="text-[11px] text-troli-sub dark:text-troli-subdark tracking-wide uppercase">Shop smart, spend sure</p>
+        </div>
       </div>
-      <div class="w-11 h-11 rounded-full bg-troli-green dark:bg-troli-greenlight flex items-center justify-center text-xl">🛒</div>
+      <button id="clearAllBtn" type="button"
+        class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">Clear All</button>
     </div>
-  </header>
 
-  <!-- Trolley Rail (signature progress element) -->
-  <section class="px-5 mt-5">
-    <div class="bg-troli-card dark:bg-troli-carddark rounded-2xl p-4 shadow-sm border border-troli-rail dark:border-troli-raildark">
-      <div class="flex justify-between items-end mb-2">
-        <span class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">In trolley</span>
-        <span id="railPercent" class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0%</span>
+    <!-- Trolley Rail progress -->
+    <div class="mt-3">
+      <div class="flex justify-between items-end mb-1">
+        <span class="text-[10px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">In trolley</span>
+        <span id="railPercent" class="text-[10px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0%</span>
       </div>
-      <div class="h-2.5 rounded-full bg-troli-rail dark:bg-troli-raildark overflow-hidden">
+      <div class="h-2 rounded-full bg-troli-rail dark:bg-troli-raildark overflow-hidden">
         <div id="railFill" class="h-full bg-troli-green dark:bg-troli-greenlight rounded-full" style="width:0%; transition: width .35s ease;"></div>
       </div>
     </div>
-  </section>
 
-  <!-- Totals -->
-  <section class="px-5 mt-4 grid grid-cols-2 gap-3">
-    <div class="bg-troli-card dark:bg-troli-carddark rounded-2xl p-4 shadow-sm border border-troli-rail dark:border-troli-raildark">
-      <p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">Estimated Total</p>
-      <p id="estTotal" class="font-display text-2xl text-troli-ink dark:text-troli-inkdark">₹0.00</p>
-    </div>
-    <div class="bg-troli-green dark:bg-troli-greenlight rounded-2xl p-4 shadow-sm">
-      <p class="text-[11px] uppercase tracking-wider text-white/70 mb-1">Trolley Total</p>
-      <p id="troliTotal" class="font-display text-2xl text-white">₹0.00</p>
-    </div>
-  </section>
-
-  <!-- Add Item Form -->
-  <section class="px-5 mt-5">
-    <form id="addForm" class="bg-troli-card dark:bg-troli-carddark rounded-2xl p-4 shadow-sm border border-troli-rail dark:border-troli-raildark flex gap-2">
-      <input id="itemName" type="text" placeholder="Item name" required
-        class="flex-1 min-w-0 bg-transparent border-b-2 border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none py-2 text-sm placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-      <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM Price" required
-        class="w-24 bg-transparent border-b-2 border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none py-2 text-sm placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+    <!-- Add Item Form -->
+    <form id="addForm" class="mt-3 flex gap-2">
+      <input id="itemName" type="text" placeholder="Item name" required autocomplete="off"
+        class="flex-1 min-w-0 bg-troli-card dark:bg-troli-carddark rounded-full px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+      <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM Price" required inputmode="decimal"
+        class="w-24 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
       <button type="submit"
         class="w-11 h-11 rounded-full bg-troli-orange text-white text-xl leading-none flex items-center justify-center shadow-sm active:scale-95 transition-transform shrink-0">+</button>
     </form>
-  </section>
+  </header>
 
-  <!-- List -->
-  <section class="px-5 mt-5">
+  <!-- SCROLLABLE CENTER: Grocery list -->
+  <main class="flex-1 overflow-y-auto px-5 py-4">
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">Your list</h2>
-      <div class="flex items-center gap-3">
-        <span id="itemCount" class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0 items</span>
-        <button id="clearAllBtn" type="button"
-          class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1 active:scale-95 transition-transform">Clear all</button>
-      </div>
+      <span id="itemCount" class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0 items</span>
     </div>
+
     <ul id="itemList" class="space-y-2"></ul>
 
-    <div id="emptyState" class="text-center py-14">
+    <div id="emptyState" class="text-center py-16">
       <div class="text-4xl mb-2">🥬</div>
-      <p class="text-sm text-troli-sub dark:text-troli-subdark">Your trolley is empty. Add your first item above!</p>
+      <p class="text-sm text-troli-sub dark:text-troli-subdark">Your trolley is empty.<br>Add your first item above!</p>
     </div>
-  </section>
+  </main>
 
-  <!-- Update Toast -->
-  <div id="updateToast" class="hidden fixed bottom-4 left-4 right-4 z-50">
+  <!-- STICKY BOTTOM: Dual real-time totals -->
+  <footer class="shrink-0 px-5 py-4 bg-troli-card dark:bg-troli-carddark border-t border-troli-rail dark:border-troli-raildark grid grid-cols-2 gap-3 z-20" style="padding-bottom: max(1rem, env(safe-area-inset-bottom));">
+    <div>
+      <p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">Total Estimated Price</p>
+      <p id="estTotal" class="font-display text-xl text-troli-ink dark:text-troli-inkdark">RM 0.00</p>
+    </div>
+    <div class="text-right">
+      <p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-0.5">Trolley Total</p>
+      <p id="troliTotal" class="font-display text-xl text-troli-green dark:text-troli-greenlight">RM 0.00</p>
+    </div>
+  </footer>
+
+  <!-- Update Toast (SW update banner) -->
+  <div id="updateToast" class="hidden fixed bottom-24 left-4 right-4 z-50">
     <div class="max-w-md mx-auto bg-troli-ink dark:bg-troli-carddark text-white rounded-2xl px-4 py-3 shadow-lg flex items-center justify-between gap-3 border border-white/10">
-      <span class="text-sm">New update available!</span>
+      <span class="text-sm">New version available!</span>
       <button id="updateRefreshBtn" type="button"
-        class="text-sm font-semibold bg-troli-orange text-white rounded-full px-4 py-1.5 active:scale-95 transition-transform shrink-0">Refresh</button>
+        class="text-sm font-semibold bg-troli-orange text-white rounded-full px-4 py-1.5 active:scale-95 transition-transform shrink-0">Update Now</button>
     </div>
   </div>
 
-  <script src="app.js" defer></script>
+  <script src="/app.js" defer></script>
   <script>
     let waitingWorker = null;
 
@@ -155,13 +150,13 @@
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').then((reg) => {
-          // Case 1: a worker is already waiting when this page loads.
+        navigator.serviceWorker.register('/sw.js').then((reg) => {
+          // A worker is already waiting when this page loads.
           if (reg.waiting) {
             showUpdateToast(reg.waiting);
           }
 
-          // Case 2: a new worker starts installing during this session.
+          // A new worker starts installing during this session.
           reg.addEventListener('updatefound', () => {
             const newWorker = reg.installing;
             if (!newWorker) return;
@@ -172,7 +167,7 @@
             });
           });
 
-          // Periodically check for a new sw.js so long-lived open tabs notice updates.
+          // Poll for new deploys so long-open tabs (common mid-shopping) notice updates.
           setInterval(() => reg.update(), 60 * 1000);
         }).catch(() => {});
 
@@ -188,7 +183,7 @@
 
     document.getElementById('updateRefreshBtn').addEventListener('click', () => {
       if (waitingWorker) {
-        waitingWorker.postMessage('SKIP_WAITING');
+        waitingWorker.postMessage('skipWaiting');
       }
       document.getElementById('updateToast').classList.add('hidden');
     });

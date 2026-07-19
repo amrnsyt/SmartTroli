@@ -1,73 +1,104 @@
-# CLAUDE_STATE.md — SmartTroli PWA
+# CLAUDE_STATE.md — SmartTroli PWA (Project Memory)
+
+## Product Context (Why This App Exists)
+SmartTroli solves the real-world chaos of Malaysian family grocery runs:
+- Multiple unstructured lists from different family members get merged into one clean list, keyed in manually before entering the store.
+- Physical trolley tracking via checkbox strike-out, so the eye only follows what's left on the shelf.
+- Dual real-time totals prevent "budget shock" at checkout:
+  1. **Total Estimated Price** — sum of every item keyed in.
+  2. **Trolley Total** — sum of only checked/in-trolley items.
+- Strict RM (Malaysian Ringgit) formatting throughout.
+- Must survive terrible in-store network signal: all data is local-first (localStorage) and the app must load/function offline via Service Worker.
 
 ## Milestone
-**M1.2: Cache-Busting Deployment + SW Update Flow** — Complete
+**M1.3: Full Architectural Rebuild — Sticky App-Shell Layout + Stale-While-Revalidate SW** — Complete
 
 ## Stack
 - Vanilla HTML5
 - Tailwind CSS (CDN, config inline in index.html)
-- Modular Vanilla JS (app.js — State object + render pipeline)
-- localStorage persistence
-- Service Worker (network-first HTML, cache-first assets, manual skipWaiting)
-- vercel.json (zero-cache headers)
+- Modular Vanilla JS (app.js — reactive State object + render pipeline)
+- localStorage persistence (survives refresh, screen-off, low-signal drops)
+- Service Worker — stale-while-revalidate strategy, manual skipWaiting update flow
+- vercel.json — zero-cache headers so deploys go live instantly
 
 ## File Structure
 ```
-/index.html        -> App shell, Tailwind config/theme, header, totals, form, list mount, Clear All button, Update Toast + SW update-detection script
-/app.js             -> State (CRUD + clearAll + totals), render(), event bindings, RM formatter
-/manifest.json      -> PWA manifest (references /icons/icon-*.png — NOT YET GENERATED)
-/sw.js              -> Offline cache, network-first HTML strategy, manual SKIP_WAITING message handler
-/vercel.json        -> Cache-Control headers: max-age=0, must-revalidate on sw.js and all routes
-/CLAUDE_STATE.md    -> This file
+/index.html         -> App shell: sticky header (branding + Clear All + progress rail + add form),
+                        scrollable center list, sticky bottom totals bar, update-toast banner + SW registration script
+/app.js              -> Reactive State { id, name, estimatedPrice, inTrolley }, localStorage sync,
+                        RM formatter, render(), clearAll, add/toggle/remove handlers
+/manifest.json       -> PWA manifest — name "SmartTroli", start_url "/", standalone, theme color, icon set
+                        (icon PNG files referenced but NOT YET GENERATED — see Known Gaps)
+/sw.js               -> Stale-while-revalidate fetch strategy, message listener for 'skipWaiting' trigger
+/vercel.json         -> Cache-Control: public, max-age=0, must-revalidate on /sw.js and /(.*)
+/CLAUDE_STATE.md     -> This file — project memory, architecture, state rules, iteration log
 ```
 
-## Changes This Iteration
-- [x] Added vercel.json with zero-cache headers on /sw.js and /(.*) as specified, so Vercel stops aggressively caching HTML/SW on redeploy
-- [x] sw.js: bumped CACHE_NAME to v2, removed automatic self.skipWaiting() on install so a new SW enters "waiting" state instead of silently taking over
-- [x] sw.js: added message listener for SKIP_WAITING so the new worker only activates when the user taps Refresh
-- [x] sw.js: fetch handler now uses network-first for HTML navigations (falls back to cache offline) and cache-first for other core assets — prevents stale index.html from being served after deploy
-- [x] index.html: added Update Toast banner ("New update available! [Refresh]") shown when reg.waiting exists on load OR a new worker finishes installing mid-session
-- [x] index.html: Refresh button posts SKIP_WAITING to the waiting worker; controllerchange listener reloads the page once the new SW takes control
-- [x] index.html: added setInterval(60s) reg.update() poll so long-open tabs detect new deploys without a manual navigation
-- [x] Reconfirmed blank initial state and RM currency formatting are unchanged/intact from previous milestone
+## Data Model (State Rules)
+```
+Item = {
+  id: string,              // timestamp + random suffix, generated on add
+  name: string,             // trimmed, HTML-escaped on render
+  estimatedPrice: number,   // parsed float, defaults to 0 on bad input
+  inTrolley: boolean        // false on creation; toggled via checkbox
+}
+```
+- **Source of truth**: `State.items` array held in memory during the session.
+- **Persistence rule**: `State.save()` (→ localStorage under key `smarttroli_items_v1`) is called after EVERY mutation: addItem, toggleItem, removeItem, clearAll. No batched/delayed writes — every action is durable immediately.
+- **Load rule**: `State.load()` runs once on script init, before first `render()`. Corrupt/missing localStorage falls back to an empty array (never crashes).
+- **Blank-start rule**: No seed/demo items are ever hardcoded. Fresh installs and cleared localStorage both render the empty state ("Your trolley is empty. Add your first item above!").
+- **Currency rule**: All money values pass through the single `fmt()` helper (`RM ${n.toFixed(2)}`). No other currency symbol may appear anywhere in the UI.
 
-## Design Tokens (unchanged)
-- Colors: bg #F6F4EE / bgdark #14170F, green #2F5233, greenlight #4C7A3F, orange (accent) #D9622B, rail #DDD8C6
-- Type: Georgia (display, totals/headings) + system-ui (body)
-- Signature element: "Trolley Rail" — horizontal progress bar showing % of items physically in trolley
-- Dark mode: prefers-color-scheme driven via dark: Tailwind classes
+## Layout Rules (App-Shell)
+- `body` is a fixed-height flex column (`h-screen flex flex-col overflow-hidden`) — no page-level scroll.
+- **Header** (`shrink-0`, sticky by virtue of flex layout): branding, Clear All button, Trolley Rail progress bar, Add Item form. Always visible.
+- **Main** (`flex-1 overflow-y-auto`): the only scrollable region — the grocery list itself.
+- **Footer** (`shrink-0`): Total Estimated Price (left) + Trolley Total (right), always visible above the thumb, respects `env(safe-area-inset-bottom)` for notched devices.
+- **Update toast**: fixed, floats above the footer, non-blocking.
+
+## Service Worker Rules
+- Cache name is versioned (`smarttroli-cache-v3`). **Bump this string on every deploy that changes any cached file**, or the browser will treat the new SW as identical and skip the "waiting" update flow entirely.
+- Fetch strategy: **stale-while-revalidate** — cached response (if present) is served immediately for instant/offline loads, while a background fetch silently refreshes the cache for next time. Falls back to `/index.html` if both cache and network fail.
+- Update activation is **manual, never automatic**: `install` does not call `skipWaiting()`. The SW sits in "waiting" state until it receives a `message` event with data `'skipWaiting'` — which only happens when the user taps "Update Now" in the toast banner.
+- `controllerchange` listener in index.html reloads the page exactly once after the new SW takes control, avoiding reload loops.
 
 ## Features Implemented
-- [x] Add item (name + estimated price) via form
-- [x] Render list from State (starts empty every fresh install/localStorage clear)
-- [x] Custom checkmark toggle -> marks item "in trolley" (strike-through + dim)
-- [x] Live "Estimated Total" (all items, RM format)
-- [x] Live "Trolley Total" (checked items only, RM format)
-- [x] Trolley Rail progress bar (% checked)
-- [x] Remove single item (X button)
-- [x] Clear All button (wipes full list + localStorage, confirm-guarded)
-- [x] Empty state placeholder
-- [x] localStorage persistence across reloads
-- [x] manifest.json (standalone, portrait, themed)
-- [x] sw.js — network-first HTML, cache-first assets, manual update flow
-- [x] Update Toast + Refresh-to-activate-new-SW flow
-- [x] vercel.json cache headers
+- [x] Blank initial state (no seed data), empty-state placeholder copy
+- [x] Add item (name + estimated price, RM) via sticky header form
+- [x] Reactive list render from `State.items`
+- [x] Trolley checkbox toggle → strike-through + dim (visual "cross out")
+- [x] Total Estimated Price (all items) — sticky bottom-left
+- [x] Trolley Total (checked items only) — sticky bottom-right
+- [x] Trolley Rail progress bar (% of items checked)
+- [x] Remove single item (✕ button)
+- [x] Clear All button in header (confirm-guarded, wipes State + localStorage)
+- [x] localStorage persistence across refresh/screen-off/reload
+- [x] manifest.json — standalone display, RM-market-appropriate branding
+- [x] Service Worker — stale-while-revalidate, offline-capable
+- [x] Manual SW update flow — "New version available!" toast, `skipWaiting` message, auto-reload on activation
+- [x] vercel.json — instant cache invalidation on redeploy for HTML + SW
 
 ## Known Gaps / Next Steps
-1. Icons still missing: manifest.json references /icons/icon-192.png, icon-512.png, and two maskable variants. These PNG files do NOT exist yet.
-2. IMPORTANT — remember to bump CACHE_NAME in sw.js (e.g. v2 -> v3) on every future deploy that changes cached files, or the install event will just re-cache identical content and no "waiting" worker will appear.
-3. No edit-item capability yet (only add/remove/clear-all) — candidate for M2.
-4. No categories/sorting — candidate for M2.
-5. No install-prompt UI (beforeinstallprompt capture) — candidate for M2.
-6. sw.js CORE_ASSETS list does not include icon paths yet — update once icons exist.
+1. **Icons missing**: `manifest.json` references `/icons/icon-192.png`, `/icons/icon-512.png`, and two maskable variants. These PNG files do not exist in the repo yet — install-to-homescreen will show a default icon or console warning until generated/uploaded.
+2. **Remember**: bump `CACHE_NAME` in `sw.js` on every future deploy that changes cached files (currently `v3`), or the update-toast flow will not trigger.
+3. No item editing (only add/remove/clear-all) — candidate for M2.
+4. No per-family-member tagging or duplicate-detection assist — candidate for M2, ties back to the "chaotic combined lists" problem statement.
+5. No explicit budget-limit warning (e.g. red state when Trolley Total nears a set ceiling) — candidate for M2, ties back to "Budget Shock" problem statement.
+6. No install-prompt UI (`beforeinstallprompt` capture) — candidate for M2.
 
-## Deployment Notes (Vercel, mobile-only workflow)
-- Static site, zero build step required.
-- Deploy root must contain: index.html, app.js, manifest.json, sw.js, vercel.json all at the same level.
-- vercel.json headers apply on next deploy automatically — no dashboard config needed.
-- After pushing an update: bump CACHE_NAME in sw.js first, then push. Existing open tabs will show the Update Toast within ~60s (or on next navigation); tapping Refresh activates the new SW and reloads.
-- Because HTML is now network-first in sw.js, first load after deploy already fetches fresh index.html when online — the update-toast flow mainly matters for the SW-cached JS/manifest assets and offline-to-online transitions.
+## Deployment Notes (Vercel, mobile-only / Android pipeline)
+- Static site, zero build step — Tailwind via CDN, no npm/build config required.
+- Deploy root must contain `index.html`, `app.js`, `manifest.json`, `sw.js`, `vercel.json` all at the same level — paths are now root-absolute (`/app.js`, `/sw.js`, `/manifest.json`) to match `start_url: "/"`.
+- `vercel.json` headers apply automatically on next deploy, no dashboard config needed.
+- After pushing an update: bump `CACHE_NAME` in `sw.js` first, then push from Android/git. Open tabs detect the new SW within ~60s (or on next navigation) and show the update toast; tapping "Update Now" activates it and reloads.
+- Because fetch is stale-while-revalidate (not network-first), the very first paint after a deploy may still show the previous cached version for a split second before the background refresh completes — this is expected and by design for offline resilience in low-signal stores; the update toast is what surfaces "a newer version is ready."
+
+## Iteration Log
+- **M1**: Initial build — index.html, manifest.json, sw.js, CLAUDE_STATE.md; Tailwind mobile-first UI, add/toggle/remove, dual totals, Trolley Rail progress bar, cache-first SW.
+- **M1.1**: Confirmed blank-start requirement; switched currency ₹ → RM; added Clear All button.
+- **M1.2**: Added `vercel.json` zero-cache headers; reworked `sw.js` for manual `skipWaiting` + network-first HTML; added update-toast UI and registration logic in `index.html`.
+- **M1.3 (current)**: Full rebuild against detailed product-scenario spec — sticky app-shell layout (fixed header/footer, scrollable list only), stale-while-revalidate SW strategy for true offline resilience, `skipWaiting` message string standardized, manifest `start_url` switched to root `/`, all asset paths made root-absolute, CLAUDE_STATE.md rewritten as full project memory doc with data-model and state rules.
 
 ## Next Prompt Should Request
-- Icon set generation (192/512 + maskable) OR user uploads existing icons to be wired in.
-- OR proceed to M2 feature set (edit items, categories, install prompt).
+- Icon set generation (192/512 + maskable) so `manifest.json` resolves cleanly, OR user uploads existing icons to be wired in.
+- OR proceed to M2 feature set: item editing, budget-limit warning, family-member tagging/duplicate detection, install prompt.

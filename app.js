@@ -1,5 +1,7 @@
 // SmartTroli — app.js
-// Modular vanilla JS: state, storage, render, events
+// Reactive state model: { id, name, estimatedPrice, inTrolley }
+// Persists to localStorage on every mutation so data survives screen-off,
+// low-signal refreshes, and app restarts inside the store.
 
 const STORAGE_KEY = 'smarttroli_items_v1';
 
@@ -19,11 +21,11 @@ const State = {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.items));
   },
 
-  addItem(name, price) {
+  addItem(name, estimatedPrice) {
     this.items.push({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       name: name.trim(),
-      price: parseFloat(price) || 0,
+      estimatedPrice: parseFloat(estimatedPrice) || 0,
       inTrolley: false
     });
     this.save();
@@ -48,13 +50,13 @@ const State = {
   },
 
   estimatedTotal() {
-    return this.items.reduce((sum, i) => sum + i.price, 0);
+    return this.items.reduce((sum, i) => sum + i.estimatedPrice, 0);
   },
 
   trolleyTotal() {
     return this.items
       .filter(i => i.inTrolley)
-      .reduce((sum, i) => sum + i.price, 0);
+      .reduce((sum, i) => sum + i.estimatedPrice, 0);
   },
 
   progressPercent() {
@@ -80,17 +82,23 @@ const el = {
   clearAllBtn: document.getElementById('clearAllBtn')
 };
 
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 function renderItem(item) {
   const li = document.createElement('li');
   li.className = 'bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 shadow-sm border border-troli-rail dark:border-troli-raildark flex items-center gap-3';
 
   li.innerHTML = `
-    <input type="checkbox" class="troli-check" ${item.inTrolley ? 'checked' : ''} aria-label="Mark ${item.name} in trolley">
+    <input type="checkbox" class="troli-check" ${item.inTrolley ? 'checked' : ''} aria-label="Mark ${escapeHtml(item.name)} in trolley">
     <div class="flex-1 min-w-0">
       <p class="strike-anim text-sm font-medium truncate ${item.inTrolley ? 'line-through decoration-troli-green dark:decoration-troli-greenlight opacity-50' : ''}">${escapeHtml(item.name)}</p>
     </div>
-    <span class="strike-anim text-sm font-display ${item.inTrolley ? 'line-through opacity-50' : ''}">${fmt(item.price)}</span>
-    <button aria-label="Remove ${item.name}" class="removeBtn w-8 h-8 rounded-full flex items-center justify-center text-troli-sub dark:text-troli-subdark active:scale-90 transition-transform">✕</button>
+    <span class="strike-anim text-sm font-display ${item.inTrolley ? 'line-through opacity-50' : ''}">${fmt(item.estimatedPrice)}</span>
+    <button aria-label="Remove ${escapeHtml(item.name)}" class="removeBtn w-8 h-8 rounded-full flex items-center justify-center text-troli-sub dark:text-troli-subdark active:scale-90 transition-transform">✕</button>
   `;
 
   li.querySelector('.troli-check').addEventListener('change', () => {
@@ -104,12 +112,6 @@ function renderItem(item) {
   });
 
   return li;
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
 }
 
 function render() {

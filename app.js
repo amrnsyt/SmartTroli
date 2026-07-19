@@ -3,16 +3,25 @@
 // Items are captured QTY-FIRST (name + quantity), price is optional and filled in
 // at the shelf/checkout — this matches how real chaotic family lists actually start.
 
-const ITEMS_KEY = 'smarttroli_items_v3';
+const ITEMS_KEY = 'smarttroli_items_v4';
 const PEOPLE_KEY = 'smarttroli_people_v2';
 const ADJ_KEY = 'smarttroli_adjustments_v2';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const fmt = (n) => `RM ${(Math.round((n + Number.EPSILON) * 100) / 100).toFixed(2)}`;
 
+// qty is nullable: null means "quantity not yet known" (shows an Add Qty button in the UI)
+// instead of silently defaulting to 1 — this matters for chaotic pre-shopping lists where
+// half the items have no stated quantity at all (e.g. "KICAP", "PISANG").
+function normalizeQty(q) {
+  if (q === null || q === undefined || q === '') return null;
+  const n = parseFloat(q);
+  return (isNaN(n) || n <= 0) ? null : n;
+}
+
 // ---------- STATE ----------
 const State = {
-  items: [],       // { id, name, qty, unit, price, inTrolley, owner, paymentMode }
+  items: [],       // { id, name, qty (number|null), unit, price, category, inTrolley, owner, paymentMode }
   people: [],      // { id, name, isMe, cashAdvance }
   adjustments: { discount: 0, rounding: 0 },
 
@@ -28,13 +37,14 @@ const State = {
   savePeople() { localStorage.setItem(PEOPLE_KEY, JSON.stringify(this.people)); },
   saveAdj() { localStorage.setItem(ADJ_KEY, JSON.stringify(this.adjustments)); },
 
-  addItem(name, price = 0, owner = 'me', paymentMode = 'cash', qty = 1, unit = '') {
+  addItem(name, price = 0, owner = 'me', paymentMode = 'cash', qty = 1, unit = '', category = '') {
     this.items.push({
       id: uid(),
       name: name.trim(),
-      qty: parseFloat(qty) || 1,
+      qty: normalizeQty(qty),
       unit: (unit || '').trim(),
       price: parseFloat(price) || 0,
+      category: (category || '').trim(),
       inTrolley: false,
       owner,
       paymentMode
@@ -45,6 +55,20 @@ const State = {
   removeItem(id) { this.items = this.items.filter(x => x.id !== id); this.saveItems(); },
   updateItem(id, patch) { const i = this.items.find(x => x.id === id); if (i) { Object.assign(i, patch); this.saveItems(); } },
   clearAll() { this.items = []; this.saveItems(); },
+
+  // Find a person by case-insensitive name, or create one if it doesn't exist yet
+  // (used when Gemini/local-parser detects a salutation like "Abah :" in the scratchpad).
+  findOrCreatePerson(name) {
+    if (!name) return 'me';
+    const trimmed = name.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'me' || trimmed.toLowerCase() === 'saya') return 'me';
+    const existing = this.people.find(p => p.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) return existing.id;
+    const newPerson = { id: uid(), name: trimmed, isMe: false, cashAdvance: 0 };
+    this.people.push(newPerson);
+    this.savePeople();
+    return newPerson.id;
+  },
 
   addPerson(name, cashAdvance) {
     this.people.push({ id: uid(), name: name.trim(), isMe: false, cashAdvance: parseFloat(cashAdvance) || 0 });
@@ -131,11 +155,16 @@ const el = {
   peopleChips: document.getElementById('peopleChips'),
   addPersonBtn: document.getElementById('addPersonBtn'),
   settleBtn: document.getElementById('settleBtn'),
-  modeToggleBtn: document.getElementById('modeToggleBtn'),
+  addFab: document.getElementById('addFab'),
+  addSheet: document.getElementById('addSheet'),
+  addSheetCloseBtn: document.getElementById('addSheetCloseBtn'),
+  modeStructuredBtn: document.getElementById('modeStructuredBtn'),
+  modeScratchBtn: document.getElementById('modeScratchBtn'),
   scratchWrap: document.getElementById('scratchWrap'),
   scratchText: document.getElementById('scratchText'),
   scratchParseBtn: document.getElementById('scratchParseBtn'),
   scratchSkeleton: document.getElementById('scratchSkeleton'),
+  scratchError: document.getElementById('scratchError'),
   structuredForm: document.getElementById('structuredFormWrap'),
   // modals
   personModal: document.getElementById('personModal'),
@@ -223,6 +252,10 @@ function renderItem(item) {
   li.className = 'relative overflow-hidden rounded-2xl border border-troli-rail dark:border-troli-raildark';
   li.dataset.id = item.id;
 
+  const hasQty = item.qty !== null && item.qty !== undefined;
+  const qtyDisplay = hasQty ? `${item.qty}${item.unit ? ' ' + escapeHtml(item.unit) : ''}` : null;
+  const priceText = item.price > 0 ? fmt(item.price) : 'Price TBD';
+
   li.innerHTML = `
     <div class="editRow absolute inset-0 flex items-center justify-end gap-2 px-3 bg-troli-orange/90">
       <button class="editBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">Edit</button>
@@ -231,13 +264,13 @@ function renderItem(item) {
     <div class="swipeRow bg-troli-card dark:bg-troli-carddark px-4 py-3 flex items-center gap-3 relative" style="transform: translateX(0px); transition: transform .18s ease;">
       <input type="checkbox" class="troli-check" ${item.inTrolley ? 'checked' : ''}>
       <div class="flex-1 min-w-0">
-        <p class="strike-anim text-sm font-medium truncate ${item.inTrolley ? 'line-through decoration-troli-green dark:decoration-troli-greenlight opacity-50' : ''}">
-          ${escapeHtml(item.name)}
-          ${(item.qty && item.qty !== 1) || item.unit ? `<span class="text-troli-orange font-normal">· ${item.qty}${item.unit ? ' ' + escapeHtml(item.unit) : 'x'}</span>` : ''}
-        </p>
-        <p class="text-[11px] text-troli-sub dark:text-troli-subdark truncate">${item.owner === 'shared' ? 'Shared (Kongsi)' : escapeHtml(personName(item.owner))} · ${item.paymentMode === 'digital' ? 'Digital/QR' : 'Cash'}</p>
+        <p class="strike-anim text-sm font-medium truncate ${item.inTrolley ? 'line-through decoration-troli-green dark:decoration-troli-greenlight opacity-50' : ''}">${escapeHtml(item.name)}</p>
+        <p class="text-[11px] text-troli-sub dark:text-troli-subdark truncate">${item.owner === 'shared' ? 'Shared (Kongsi)' : escapeHtml(personName(item.owner))} · ${item.paymentMode === 'digital' ? 'Digital/QR' : 'Cash'} · ${item.price > 0 ? escapeHtml(priceText) : '<span class="italic">Price TBD</span>'}</p>
       </div>
-      <span class="strike-anim text-sm font-display ${item.inTrolley ? 'line-through opacity-50' : ''} ${item.price === 0 ? 'text-troli-orange' : ''}">${item.price === 0 ? 'Add price' : fmt(item.price)}</span>
+      ${hasQty
+        ? `<span class="strike-anim text-sm font-display font-semibold shrink-0 ${item.inTrolley ? 'line-through opacity-50' : ''}">${qtyDisplay}</span>`
+        : `<button class="addQtyBtn text-xs font-semibold text-troli-orange border border-troli-orange/50 rounded-full px-3 py-1.5 shrink-0 active:scale-95 transition-transform">+ Add Qty</button>`
+      }
     </div>
   `;
 
@@ -245,6 +278,8 @@ function renderItem(item) {
   li.querySelector('.troli-check').addEventListener('change', () => { State.toggleItem(item.id); renderAll(); });
   li.querySelector('.delBtn').addEventListener('click', () => { State.removeItem(item.id); renderAll(); });
   li.querySelector('.editBtn').addEventListener('click', () => openEditModal(item));
+  const addQtyBtn = li.querySelector('.addQtyBtn');
+  if (addQtyBtn) addQtyBtn.addEventListener('click', () => openEditModal(item, 'qty'));
 
   // Swipe gestures
   let startX = 0, currentX = 0, dragging = false;
@@ -268,16 +303,17 @@ function renderItem(item) {
 
 let editingId = null;
 
-function openEditModal(item) {
+function openEditModal(item, focusField) {
   editingId = item.id;
   el.editName.value = item.name;
-  el.editQty.value = item.qty || 1;
+  el.editQty.value = (item.qty === null || item.qty === undefined) ? '' : item.qty;
   el.editUnit.value = item.unit || '';
   el.editPrice.value = item.price || 0;
   renderOwnerOptions(el.editOwnerSelect, item.owner);
   el.editPayToggle.dataset.mode = item.paymentMode;
   el.editPayToggle.textContent = item.paymentMode === 'digital' ? '📱 Digital' : '💵 Cash';
   el.editModal.classList.remove('hidden');
+  if (focusField === 'qty') { setTimeout(() => el.editQty.focus(), 50); }
 }
 
 el.editPayToggle.addEventListener('click', () => {
@@ -294,7 +330,7 @@ el.editSaveBtn.addEventListener('click', () => {
   if (!name) { toast('Item name cannot be empty', 'error'); return; }
   State.updateItem(editingId, {
     name,
-    qty: parseFloat(el.editQty.value) || 1,
+    qty: normalizeQty(el.editQty.value),
     unit: el.editUnit.value.trim(),
     price: parseFloat(el.editPrice.value) || 0,
     owner: el.editOwnerSelect.value,
@@ -305,10 +341,46 @@ el.editSaveBtn.addEventListener('click', () => {
   renderAll();
 });
 
+const CATEGORY_ORDER = ['Sayur-sayuran', 'Buah-buahan', 'Daging & Ayam', 'Ikan & Makanan Laut', 'Tenusu', 'Perencah & Sos', 'Lain-lain'];
+
+function sortedCategories(categories) {
+  return categories.sort((a, b) => {
+    const ia = CATEGORY_ORDER.indexOf(a), ib = CATEGORY_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
 function renderAll() {
   el.list.innerHTML = '';
-  if (State.items.length === 0) { el.empty.classList.remove('hidden'); }
-  else { el.empty.classList.add('hidden'); State.items.forEach(i => el.list.appendChild(renderItem(i))); }
+  if (State.items.length === 0) {
+    el.empty.classList.remove('hidden');
+  } else {
+    el.empty.classList.add('hidden');
+
+    const groups = {};
+    State.items.forEach(i => {
+      const cat = i.category || 'Lain-lain';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(i);
+    });
+    const categoryNames = Object.keys(groups);
+
+    if (categoryNames.length <= 1) {
+      // Flat list — no point showing a single category header.
+      State.items.forEach(i => el.list.appendChild(renderItem(i)));
+    } else {
+      sortedCategories(categoryNames).forEach(cat => {
+        const header = document.createElement('li');
+        header.className = 'sticky top-0 z-10 bg-troli-bg/95 dark:bg-troli-bgdark/95 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider text-troli-green dark:text-troli-greenlight px-1 py-1.5 -mx-2 -mt-2';
+        header.textContent = cat;
+        el.list.appendChild(header);
+        groups[cat].forEach(i => el.list.appendChild(renderItem(i)));
+      });
+    }
+  }
 
   el.estTotal.textContent = fmt(State.estimatedTotal());
   el.troliTotal.textContent = fmt(State.trolleyTotal());
@@ -424,74 +496,54 @@ el.settleBtn.addEventListener('click', () => {
 el.settleCloseBtn.addEventListener('click', () => el.settleModal.classList.add('hidden'));
 
 // ---------- Dynamic Scratchpad (local naive parser — Gemini AI parsing is Phase 2) ----------
-el.modeToggleBtn.addEventListener('click', () => {
-  const showingScratch = !el.scratchWrap.classList.contains('hidden');
-  el.scratchWrap.classList.toggle('hidden', showingScratch);
-  el.structuredForm.classList.toggle('hidden', !showingScratch);
-  el.modeToggleBtn.textContent = showingScratch ? '📝 Scratchpad' : '📋 Structured';
-});
+function openAddSheet() { el.addSheet.classList.remove('hidden'); }
+function closeAddSheet() { el.addSheet.classList.add('hidden'); }
 
-// Qty-first local fallback parser (used when Gemini is unreachable).
-// Priority: 1) explicit RM price at end -> price-based item (qty=1)
-//           2) trailing "<number> <unit>" -> qty-based item (price=0, fill in later)
-//           3) no signal -> qty=1, price=0
-const UNIT_WORDS = 'ekor|batang|biji|ulas|ikat|kg|g|gram|ml|l|liter|pcs|pkt|pack|packet|bungkus|kotak|tin|botol|dozen|lusin';
+el.addFab.addEventListener('click', openAddSheet);
+el.addSheetCloseBtn.addEventListener('click', closeAddSheet);
+el.addSheet.addEventListener('click', (e) => { if (e.target === el.addSheet) closeAddSheet(); });
 
-function parseScratchLine(line) {
-  // 1) Explicit price at the end, e.g. "Milk 1L RM12.50" or "Milk 1L 12.50"
-  const priceMatch = line.match(/RM\s?(\d+(?:\.\d{1,2})?)\s*$/i);
-  if (priceMatch) {
-    const price = parseFloat(priceMatch[1]);
-    const name = line.slice(0, priceMatch.index).replace(/[-–—:]+\s*$/, '').trim();
-    if (name) return { name, price, qty: 1, unit: '' };
-  }
-
-  // 2) Trailing quantity + unit, e.g. "Ayam sekoq potong kecik 2 ekor" or "Carrot 2 batang"
-  const qtyMatch = line.match(new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${UNIT_WORDS})\\.?\\s*$`, 'i'));
-  if (qtyMatch) {
-    const qty = parseFloat(qtyMatch[1]);
-    const unit = qtyMatch[2];
-    const name = line.slice(0, qtyMatch.index).replace(/[-–—:]+\s*$/, '').trim();
-    if (name) return { name, price: 0, qty, unit };
-  }
-
-  // 3) Bare trailing number with no unit and no RM/decimal — treat as quantity, not price
-  const bareNumMatch = line.match(/(\d+)\s*$/);
-  if (bareNumMatch && !line.match(/\.\d{1,2}\s*$/)) {
-    const qty = parseFloat(bareNumMatch[1]);
-    const name = line.slice(0, bareNumMatch.index).replace(/[-–—:]+\s*$/, '').trim();
-    if (name) return { name, price: 0, qty, unit: '' };
-  }
-
-  const name = line.trim();
-  if (!name) return null;
-  return { name, price: 0, qty: 1, unit: '' };
+function setAddMode(mode) {
+  const structured = mode === 'structured';
+  el.structuredForm.classList.toggle('hidden', !structured);
+  el.scratchWrap.classList.toggle('hidden', structured);
+  el.modeStructuredBtn.dataset.active = structured;
+  el.modeScratchBtn.dataset.active = !structured;
+  el.modeStructuredBtn.className = structured
+    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight bg-troli-green dark:bg-troli-greenlight text-white'
+    : 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
+  el.modeScratchBtn.className = !structured
+    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight bg-troli-green dark:bg-troli-greenlight text-white'
+    : 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
 }
-
-function localParseFallback(rawText) {
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
-  const parsed = [];
-  lines.forEach(line => {
-    const p = parseScratchLine(line);
-    if (p) {
-      const existing = parsed.find(x => x.name.toLowerCase() === p.name.toLowerCase() && x.unit === p.unit);
-      if (existing) { existing.qty += p.qty; existing.price += p.price; }
-      else parsed.push(p);
-    }
-  });
-  return parsed;
-}
+el.modeStructuredBtn.addEventListener('click', () => setAddMode('structured'));
+el.modeScratchBtn.addEventListener('click', () => setAddMode('scratch'));
 
 function setScratchLoading(isLoading) {
   el.scratchParseBtn.disabled = isLoading;
   el.scratchText.disabled = isLoading;
   el.scratchSkeleton.classList.toggle('hidden', !isLoading);
   el.scratchParseBtn.textContent = isLoading ? 'Parsing…' : 'Parse into list';
+  if (isLoading) el.scratchError.classList.add('hidden');
 }
 
+function showScratchError(message) {
+  el.scratchError.textContent = `⚠️ ${message}`;
+  el.scratchError.classList.remove('hidden');
+}
+
+// Scratchpad is Gemini-only by design — no local fallback. If Gemini can't be reached,
+// the user sees exactly why (offline / timeout / server error) instead of getting silently
+// degraded results from a regex guesser. Structured mode remains fully offline-capable.
 async function parseWithGemini(rawText) {
+  if (!navigator.onLine) {
+    const err = new Error('No internet connection. Gemini needs internet to parse your list.');
+    err.reason = 'offline';
+    throw err;
+  }
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
+  const timeout = setTimeout(() => controller.abort(), 12000);
   try {
     const res = await fetch('/api/parse-list', {
       method: 'POST',
@@ -500,12 +552,33 @@ async function parseWithGemini(rawText) {
       signal: controller.signal
     });
     clearTimeout(timeout);
-    if (!res.ok) throw new Error('Gemini API request failed');
+
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.json()).error || ''; } catch (e) { /* ignore */ }
+      const err = new Error(detail ? `Gemini API error: ${detail}` : `Gemini API error (${res.status}).`);
+      err.reason = 'api';
+      throw err;
+    }
+
     const data = await res.json();
-    if (!Array.isArray(data.items)) throw new Error('Unexpected response shape');
+    if (!Array.isArray(data.items)) {
+      const err = new Error('Gemini returned an unexpected response.');
+      err.reason = 'api';
+      throw err;
+    }
     return data.items;
   } catch (err) {
     clearTimeout(timeout);
+    if (err.name === 'AbortError') {
+      const timeoutErr = new Error('Gemini took too long to respond (timeout). Check your connection and try again.');
+      timeoutErr.reason = 'timeout';
+      throw timeoutErr;
+    }
+    if (!err.reason) {
+      err.reason = 'network';
+      err.message = 'Could not reach Gemini. Check your internet connection and try again.';
+    }
     throw err;
   }
 }
@@ -516,40 +589,48 @@ el.scratchParseBtn.addEventListener('click', async () => {
 
   setScratchLoading(true);
   let parsed = [];
-  let usedFallback = false;
 
   try {
     parsed = await parseWithGemini(rawText);
   } catch (err) {
-    // Offline or Gemini unavailable — fall back to local regex parser so the
-    // app keeps working with poor supermarket signal (offline-first requirement).
-    usedFallback = true;
-    parsed = localParseFallback(rawText);
+    setScratchLoading(false);
+    showScratchError(err.message);
+    checkGeminiConnection(true); // refresh the status dot to reflect the failure
+    return;
   }
 
   setScratchLoading(false);
 
   if (!parsed || parsed.length === 0) {
-    toast(usedFallback
-      ? 'No signal reached Gemini and local parsing found nothing. Try one item per line.'
-      : 'Gemini could not detect any items in that text.', 'error');
+    showScratchError('Gemini could not detect any items in that text.');
     return;
   }
 
-  parsed.forEach(p => State.addItem(p.name, p.price || 0, 'me', 'cash', p.qty || 1, p.unit || ''));
+  parsed.forEach(p => {
+    let ownerId;
+    if (p.ownerName && p.ownerName.trim().toLowerCase() === 'shared') {
+      ownerId = 'shared';
+    } else if (p.ownerName) {
+      ownerId = State.findOrCreatePerson(p.ownerName);
+    } else {
+      ownerId = 'me';
+    }
+    State.addItem(p.name, p.price || 0, ownerId, 'cash', p.qty, p.unit || '', p.category || '');
+  });
   el.scratchText.value = '';
-  el.modeToggleBtn.click(); // switch back to structured view to review/edit
+  closeAddSheet();
   renderAll();
 
-  toast(
-    usedFallback
-      ? `Parsed locally (offline) — ${parsed.length} item(s) added by quantity. Add prices at the shelf.`
-      : `Gemini parsed ${parsed.length} item(s) by quantity — add prices as you shop.`,
-    usedFallback ? 'info' : 'success'
-  );
+  const newPeople = [...new Set(parsed.map(p => p.ownerName).filter(n => n && n.toLowerCase() !== 'shared'))];
+  const combinedCount = parsed.filter(p => p.ownerName && p.ownerName.toLowerCase() === 'shared').length;
+  const peopleNote = newPeople.length ? ` Tagged to: ${newPeople.join(', ')}.` : '';
+  const combinedNote = combinedCount ? ` ${combinedCount} combined into Shared.` : '';
+
+  toast(`Gemini parsed ${parsed.length} item(s), sorted by category.${peopleNote}${combinedNote}`, 'success');
 });
 
 // ---------- Init ----------
 State.load();
 renderAll();
 checkGeminiConnection(true);
+setAddMode('structured');

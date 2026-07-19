@@ -41,7 +41,7 @@
 </head>
 <body class="bg-troli-bg dark:bg-troli-bgdark font-body text-troli-ink dark:text-troli-inkdark h-screen flex flex-col overflow-hidden transition-colors">
 
-  <!-- STICKY TOP -->
+  <!-- STICKY TOP (compact — list is the main content, not this header) -->
   <header class="shrink-0 px-5 pt-6 pb-3 bg-troli-bg/95 dark:bg-troli-bgdark/95 backdrop-blur-sm border-b border-troli-rail dark:border-troli-raildark z-20">
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -51,10 +51,7 @@
           <p class="text-[11px] text-troli-sub dark:text-troli-subdark tracking-wide uppercase">Kongsi Troli · Shop, split, settle</p>
         </div>
       </div>
-      <div class="flex items-center gap-2">
-        <button id="modeToggleBtn" type="button" class="text-[11px] uppercase tracking-wider text-troli-green dark:text-troli-greenlight border border-troli-green/30 dark:border-troli-greenlight/30 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">📝 Scratchpad</button>
-        <button id="clearAllBtn" type="button" class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">Clear</button>
-      </div>
+      <button id="clearAllBtn" type="button" class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">Clear</button>
     </div>
 
     <!-- Trolley Rail progress -->
@@ -68,69 +65,35 @@
       </div>
     </div>
 
-    <!-- People chips + wallet -->
+    <!-- People chips -->
     <div class="mt-3 flex items-center gap-2 overflow-x-auto pb-1" id="peopleChips"></div>
     <div class="mt-2 flex items-center gap-2">
       <button id="addPersonBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">+ Person</button>
       <button id="adjustBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">⚙️ Adjust</button>
       <button id="settleBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-green dark:bg-troli-greenlight text-white rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0 ml-auto">Arahan Malas 🧮</button>
     </div>
-
-    <!-- Structured Add Form -->
-    <div id="structuredFormWrap">
-      <form id="addForm" class="mt-3 flex flex-wrap gap-2">
-        <input id="itemName" type="text" placeholder="Item name" required autocomplete="off"
-          class="flex-1 min-w-[40%] bg-troli-card dark:bg-troli-carddark rounded-full px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-        <input id="itemQty" type="number" step="0.5" min="0" placeholder="Qty" value="1"
-          class="w-16 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-        <input id="itemUnit" type="text" placeholder="Unit" autocomplete="off"
-          class="w-16 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-        <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM (optional)" inputmode="decimal"
-          class="w-24 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-        <select id="ownerSelect" class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none"></select>
-        <button id="payToggle" type="button" data-mode="cash"
-          class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark shrink-0">💵 Cash</button>
-        <button type="submit"
-          class="w-11 h-11 rounded-full bg-troli-orange text-white text-xl leading-none flex items-center justify-center shadow-sm active:scale-95 transition-transform shrink-0">+</button>
-      </form>
-    </div>
-
-    <!-- Dynamic Scratchpad -->
-    <div id="scratchWrap" class="hidden mt-3">
-      <textarea id="scratchText" rows="4" placeholder="Paste your messy WhatsApp list here — one item per line. Quantity is enough, price is optional. e.g.&#10;Ayam sekoq potong kecik 2 ekor&#10;Carrot 2 batang&#10;Milk 1L RM12.50"
-        class="w-full bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark"></textarea>
-
-      <!-- Skeleton pulse shown while Gemini parses -->
-      <div id="scratchSkeleton" class="hidden mt-2 space-y-2">
-        <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
-        <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
-        <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse w-2/3"></div>
-      </div>
-
-      <div class="flex items-center justify-between mt-2">
-        <button id="geminiCheckBtn" type="button" class="flex items-center gap-1.5 text-[10px] text-troli-sub dark:text-troli-subdark">
-          <span id="geminiDot" class="inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark"></span>
-          ✨ Gemini · tap to check connection
-        </button>
-        <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform disabled:opacity-50">Parse into list</button>
-      </div>
-      <p class="text-[10px] text-troli-sub dark:text-troli-subdark mt-1">Items are captured by quantity first — add prices as you shop. Falls back to local parsing if offline.</p>
-    </div>
   </header>
 
-  <!-- SCROLLABLE CENTER -->
-  <main class="flex-1 overflow-y-auto px-5 py-4">
-    <div class="flex items-center justify-between mb-2">
-      <h2 class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">Your list</h2>
+  <!-- SCROLLABLE CENTER — the list is the app's primary surface -->
+  <main class="flex-1 overflow-y-auto px-4 pt-4 pb-28">
+    <div class="flex items-baseline justify-between mb-3 px-1">
+      <h2 class="font-display text-xl text-troli-ink dark:text-troli-inkdark">Your List</h2>
       <span id="itemCount" class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0 items</span>
     </div>
-    <ul id="itemList" class="space-y-2"></ul>
-    <div id="emptyState" class="text-center py-16">
-      <div class="text-4xl mb-2">🥬</div>
-      <p class="text-sm text-troli-sub dark:text-troli-subdark">Your trolley is empty.<br>Add your first item above!</p>
-      <p class="text-[11px] text-troli-sub dark:text-troli-subdark mt-3">Tip: swipe an item right to check it off, swipe left to edit or delete.</p>
+    <div class="bg-troli-card/60 dark:bg-troli-carddark/40 rounded-3xl p-2 shadow-sm min-h-[40vh]">
+      <ul id="itemList" class="space-y-2"></ul>
+      <div id="emptyState" class="text-center py-16">
+        <div class="text-4xl mb-2">🥬</div>
+        <p class="text-sm text-troli-sub dark:text-troli-subdark">Your trolley is empty.<br>Tap the + button to add your first item!</p>
+        <p class="text-[11px] text-troli-sub dark:text-troli-subdark mt-3">Tip: swipe an item right to check it off, swipe left to edit or delete.</p>
+      </div>
     </div>
   </main>
+
+  <!-- Floating Add button -->
+  <button id="addFab" type="button" aria-label="Add items"
+    class="fixed right-4 z-30 w-14 h-14 rounded-full bg-troli-orange text-white text-2xl leading-none flex items-center justify-center shadow-lg active:scale-95 transition-transform"
+    style="bottom: calc(6.5rem + env(safe-area-inset-bottom));">+</button>
 
   <!-- STICKY BOTTOM -->
   <footer class="shrink-0 px-5 py-3 bg-troli-card dark:bg-troli-carddark border-t border-troli-rail dark:border-troli-raildark z-20" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));">
@@ -155,6 +118,67 @@
       </div>
     </div>
   </footer>
+
+  <!-- Add Items Bottom Sheet -->
+  <div id="addSheet" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end justify-center">
+    <div class="w-full max-w-md bg-troli-bg dark:bg-troli-bgdark rounded-t-3xl p-5 max-h-[85vh] overflow-y-auto" style="padding-bottom: max(1.25rem, env(safe-area-inset-bottom));">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-display text-lg">Add Items</h3>
+        <button id="addSheetCloseBtn" type="button" class="w-8 h-8 rounded-full bg-troli-card dark:bg-troli-carddark flex items-center justify-center text-troli-sub dark:text-troli-subdark">✕</button>
+      </div>
+
+      <div class="flex gap-2 mb-3">
+        <button id="modeStructuredBtn" type="button" data-active="true"
+          class="flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight bg-troli-green dark:bg-troli-greenlight text-white">📋 Structured</button>
+        <button id="modeScratchBtn" type="button" data-active="false"
+          class="flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark">📝 Scratchpad (AI)</button>
+      </div>
+
+      <!-- Structured Add Form -->
+      <div id="structuredFormWrap">
+        <form id="addForm" class="flex flex-wrap gap-2">
+          <input id="itemName" type="text" placeholder="Item name" required autocomplete="off"
+            class="flex-1 min-w-[40%] bg-troli-card dark:bg-troli-carddark rounded-full px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+          <input id="itemQty" type="number" step="0.5" min="0" placeholder="Qty" value="1"
+            class="w-16 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+          <input id="itemUnit" type="text" placeholder="Unit" autocomplete="off"
+            class="w-16 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+          <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM (optional)" inputmode="decimal"
+            class="w-24 bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
+          <select id="ownerSelect" class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none"></select>
+          <button id="payToggle" type="button" data-mode="cash"
+            class="bg-troli-card dark:bg-troli-carddark rounded-full px-3 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark shrink-0">💵 Cash</button>
+          <button type="submit"
+            class="w-11 h-11 rounded-full bg-troli-orange text-white text-xl leading-none flex items-center justify-center shadow-sm active:scale-95 transition-transform shrink-0">+</button>
+        </form>
+      </div>
+
+      <!-- Dynamic Scratchpad — Gemini required, no offline fallback -->
+      <div id="scratchWrap" class="hidden">
+        <textarea id="scratchText" rows="6" placeholder="Paste your messy WhatsApp list here. e.g.&#10;KICAP&#10;UBI 3 BIJI&#10;CARROT 1&#10;PISANG&#10;&#10;Abah :&#10;Ayam sekoq potong kecik&#10;Bawang kecik"
+          class="w-full bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark"></textarea>
+
+        <!-- Skeleton pulse shown while Gemini parses -->
+        <div id="scratchSkeleton" class="hidden mt-2 space-y-2">
+          <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
+          <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
+          <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse w-2/3"></div>
+        </div>
+
+        <!-- Persistent error banner — Gemini is required for this mode, no silent fallback -->
+        <div id="scratchError" class="hidden mt-2 text-xs text-troli-orange bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2"></div>
+
+        <div class="flex items-center justify-between mt-2">
+          <button id="geminiCheckBtn" type="button" class="flex items-center gap-1.5 text-[10px] text-troli-sub dark:text-troli-subdark">
+            <span id="geminiDot" class="inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark"></span>
+            ✨ Gemini · tap to check connection
+          </button>
+          <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform disabled:opacity-50">Parse into list</button>
+        </div>
+        <p class="text-[10px] text-troli-sub dark:text-troli-subdark mt-1">Requires internet — Gemini detects owner tags like "Abah :", sorts by category, and combines duplicates across lists. No offline mode for this feature.</p>
+      </div>
+    </div>
+  </div>
 
   <!-- Person Modal -->
   <div id="personModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">

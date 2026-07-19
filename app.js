@@ -42,6 +42,11 @@ const State = {
     this.save();
   },
 
+  clearAll() {
+    this.items = [];
+    this.save();
+  },
+
   estimatedTotal() {
     return this.items.reduce((sum, i) => sum + i.price, 0);
   },
@@ -59,7 +64,7 @@ const State = {
   }
 };
 
-const fmt = (n) => `₹${n.toFixed(2)}`;
+const fmt = (n) => `RM ${n.toFixed(2)}`;
 
 const el = {
   form: document.getElementById('addForm'),
@@ -71,7 +76,8 @@ const el = {
   troliTotal: document.getElementById('troliTotal'),
   railFill: document.getElementById('railFill'),
   railPercent: document.getElementById('railPercent'),
-  itemCount: document.getElementById('itemCount')
+  itemCount: document.getElementById('itemCount'),
+  clearAllBtn: document.getElementById('clearAllBtn')
 };
 
 function renderItem(item) {
@@ -135,6 +141,14 @@ el.form.addEventListener('submit', (e) => {
   el.price.value = '';
   el.name.focus();
   render();
+});
+
+el.clearAllBtn.addEventListener('click', () => {
+  if (State.items.length === 0) return;
+  if (confirm('Clear the entire list? This cannot be undone.')) {
+    State.clearAll();
+    render();
+  }
 });
 
 State.load();

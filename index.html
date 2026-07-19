@@ -110,7 +110,7 @@
     <form id="addForm" class="bg-troli-card dark:bg-troli-carddark rounded-2xl p-4 shadow-sm border border-troli-rail dark:border-troli-raildark flex gap-2">
       <input id="itemName" type="text" placeholder="Item name" required
         class="flex-1 min-w-0 bg-transparent border-b-2 border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none py-2 text-sm placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
-      <input id="itemPrice" type="number" step="0.01" min="0" placeholder="₹ Price" required
+      <input id="itemPrice" type="number" step="0.01" min="0" placeholder="RM Price" required
         class="w-24 bg-transparent border-b-2 border-troli-rail dark:border-troli-raildark focus:border-troli-green dark:focus:border-troli-greenlight outline-none py-2 text-sm placeholder:text-troli-sub dark:placeholder:text-troli-subdark" />
       <button type="submit"
         class="w-11 h-11 rounded-full bg-troli-orange text-white text-xl leading-none flex items-center justify-center shadow-sm active:scale-95 transition-transform shrink-0">+</button>
@@ -121,13 +121,17 @@
   <section class="px-5 mt-5">
     <div class="flex items-center justify-between mb-2">
       <h2 class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">Your list</h2>
-      <span id="itemCount" class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0 items</span>
+      <div class="flex items-center gap-3">
+        <span id="itemCount" class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">0 items</span>
+        <button id="clearAllBtn" type="button"
+          class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1 active:scale-95 transition-transform">Clear all</button>
+      </div>
     </div>
     <ul id="itemList" class="space-y-2"></ul>
 
     <div id="emptyState" class="text-center py-14">
       <div class="text-4xl mb-2">🥬</div>
-      <p class="text-sm text-troli-sub dark:text-troli-subdark">Your trolley is waiting. Add your first item above.</p>
+      <p class="text-sm text-troli-sub dark:text-troli-subdark">Your trolley is empty. Add your first item above!</p>
     </div>
   </section>
 

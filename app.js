@@ -21,7 +21,11 @@ function normalizeQty(q) {
 
 // ---------- STATE ----------
 const State = {
-  items: [],       // { id, name, qty (number|null), unit, price, category, inTrolley, owner, paymentMode }
+  items: [],       // { id, name, qty (number|null), unit, price, category, inTrolley, owner,
+                   //   paymentMode, scanned } — scanned=true means a receipt confirmed this
+                   //   item as bought (Phase 5: To Buy / Bought tabs). Items loaded from an
+                   //   older localStorage version won't have this field; treated as falsy
+                   //   (i.e. still "to buy") everywhere it's read, so no migration needed.
   people: [],      // { id, name, isMe, cashAdvance }
   adjustments: { discount: 0, rounding: 0 },
 
@@ -37,7 +41,7 @@ const State = {
   savePeople() { localStorage.setItem(PEOPLE_KEY, JSON.stringify(this.people)); },
   saveAdj() { localStorage.setItem(ADJ_KEY, JSON.stringify(this.adjustments)); },
 
-  addItem(name, price = 0, owner = 'me', paymentMode = 'cash', qty = 1, unit = '', category = '') {
+  addItem(name, price = 0, owner = 'me', paymentMode = 'cash', qty = 1, unit = '', category = '', scanned = false) {
     this.items.push({
       id: uid(),
       name: name.trim(),
@@ -47,7 +51,8 @@ const State = {
       category: (category || '').trim(),
       inTrolley: false,
       owner,
-      paymentMode
+      paymentMode,
+      scanned: !!scanned
     });
     this.saveItems();
   },
@@ -88,10 +93,6 @@ const State = {
 
   estimatedTotal() { return this.items.reduce((s, i) => s + i.price, 0); },
   trolleyTotal() { return this.items.filter(i => i.inTrolley).reduce((s, i) => s + i.price, 0); },
-  progressPercent() {
-    if (this.items.length === 0) return 0;
-    return Math.round((this.items.filter(i => i.inTrolley).length / this.items.length) * 100);
-  },
 
   cashInHand() {
     const totalAdvance = this.people.reduce((s, p) => s + (p.cashAdvance || 0), 0);
@@ -150,9 +151,9 @@ const el = {
   empty: document.getElementById('emptyState'),
   estTotal: document.getElementById('estTotal'),
   troliTotal: document.getElementById('troliTotal'),
-  railFill: document.getElementById('railFill'),
-  railPercent: document.getElementById('railPercent'),
   itemCount: document.getElementById('itemCount'),
+  tabToBuyBtn: document.getElementById('tabToBuyBtn'),
+  tabBoughtBtn: document.getElementById('tabBoughtBtn'),
   clearAllBtn: document.getElementById('clearAllBtn'),
   cashInHand: document.getElementById('cashInHand'),
   digitalOwed: document.getElementById('digitalOwed'),
@@ -286,6 +287,26 @@ function renderItem(item) {
   const qtyDisplay = hasQty ? `${item.qty}${item.unit ? ' ' + escapeHtml(item.unit) : ''}` : null;
   const priceText = item.price > 0 ? fmt(item.price) : 'Price TBD';
 
+  // Once a receipt confirms an item as bought (item.scanned), qty stops being the useful
+  // number to show — the shopper isn't picking a quantity off a shelf anymore, they're
+  // reviewing what they paid. So the trailing badge flips from qty to price, and the price
+  // that used to live in the subtitle moves out to make room for qty there instead (keeps
+  // "how many did I actually buy" visible without needing to reopen Edit).
+  const subtitleTail = item.scanned
+    ? (hasQty ? escapeHtml(qtyDisplay) : '')
+    : (item.price > 0 ? escapeHtml(priceText) : '<span class="italic">Price TBD</span>');
+  const subtitleParts = [
+    item.owner === 'shared' ? 'Shared (Kongsi)' : escapeHtml(personName(item.owner)),
+    item.paymentMode === 'digital' ? 'Digital/QR' : 'Cash'
+  ];
+  if (subtitleTail) subtitleParts.push(subtitleTail);
+
+  const trailingHtml = item.scanned
+    ? `<span class="strike-anim text-sm font-display font-semibold shrink-0 ${item.inTrolley ? 'line-through opacity-50' : ''}">${escapeHtml(priceText)}</span>`
+    : (hasQty
+        ? `<span class="strike-anim text-sm font-display font-semibold shrink-0 ${item.inTrolley ? 'line-through opacity-50' : ''}">${qtyDisplay}</span>`
+        : `<button class="addQtyBtn text-xs font-semibold text-troli-orange border border-troli-orange/50 rounded-full px-3 py-1.5 shrink-0 active:scale-95 transition-transform">+ Add Qty</button>`);
+
   li.innerHTML = `
     <div class="editRow absolute inset-0 flex items-center justify-end gap-2 px-3 bg-troli-orange/90">
       <button class="editBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">Edit</button>
@@ -295,12 +316,9 @@ function renderItem(item) {
       <input type="checkbox" class="troli-check" ${item.inTrolley ? 'checked' : ''}>
       <div class="flex-1 min-w-0">
         <p class="strike-anim text-sm font-medium truncate ${item.inTrolley ? 'line-through decoration-troli-green dark:decoration-troli-greenlight opacity-50' : ''}">${escapeHtml(item.name)}</p>
-        <p class="text-[11px] text-troli-sub dark:text-troli-subdark truncate">${item.owner === 'shared' ? 'Shared (Kongsi)' : escapeHtml(personName(item.owner))} · ${item.paymentMode === 'digital' ? 'Digital/QR' : 'Cash'} · ${item.price > 0 ? escapeHtml(priceText) : '<span class="italic">Price TBD</span>'}</p>
+        <p class="text-[11px] text-troli-sub dark:text-troli-subdark truncate">${subtitleParts.join(' · ')}</p>
       </div>
-      ${hasQty
-        ? `<span class="strike-anim text-sm font-display font-semibold shrink-0 ${item.inTrolley ? 'line-through opacity-50' : ''}">${qtyDisplay}</span>`
-        : `<button class="addQtyBtn text-xs font-semibold text-troli-orange border border-troli-orange/50 rounded-full px-3 py-1.5 shrink-0 active:scale-95 transition-transform">+ Add Qty</button>`
-      }
+      ${trailingHtml}
     </div>
   `;
 
@@ -396,24 +414,69 @@ function sortedCategories(categories) {
   });
 }
 
+// currentTab drives which half of the list is shown: 'tobuy' = !item.scanned,
+// 'bought' = item.scanned. See CLAUDE_STATE.md "To Buy / Bought tabs" for the full rationale.
+let currentTab = 'tobuy';
+
+function tabItems() {
+  return currentTab === 'bought' ? State.items.filter(i => i.scanned) : State.items.filter(i => !i.scanned);
+}
+
+function setActiveTab(tab) {
+  currentTab = tab;
+  const isToBuy = tab === 'tobuy';
+  el.tabToBuyBtn.className = isToBuy
+    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight troli-btn-primary'
+    : 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
+  el.tabBoughtBtn.className = !isToBuy
+    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight troli-btn-primary'
+    : 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
+  // Adding new items only makes sense while you're still shopping — the Bought tab is a
+  // record of what a receipt already confirmed, not a place to stage more items.
+  el.addFab.classList.toggle('hidden', !isToBuy);
+  renderAll();
+}
+el.tabToBuyBtn.addEventListener('click', () => setActiveTab('tobuy'));
+el.tabBoughtBtn.addEventListener('click', () => setActiveTab('bought'));
+
 function renderAll() {
   el.list.innerHTML = '';
-  if (State.items.length === 0) {
+  const items = tabItems();
+
+  if (items.length === 0) {
     el.empty.classList.remove('hidden');
+    const emptyParas = el.empty.querySelectorAll('p');
+    if (currentTab === 'bought') {
+      emptyParas[0].innerHTML = 'Nothing bought yet.<br>Scan a receipt to move items here once they\'re purchased.';
+      emptyParas[1].classList.add('hidden');
+    } else {
+      emptyParas[0].innerHTML = 'Your trolley is empty.<br>Tap the + button to add your first item!';
+      emptyParas[1].classList.remove('hidden');
+    }
   } else {
     el.empty.classList.add('hidden');
 
     const groups = {};
-    State.items.forEach(i => {
+    items.forEach(i => {
       const cat = i.category || 'Lain-lain';
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(i);
     });
     const categoryNames = Object.keys(groups);
 
+    // Manually checking an item off (before it's ever gone through a receipt scan) sinks it
+    // to the bottom of its category within To Buy, so the top of the list always shows what's
+    // still outstanding. Stable sort preserves add-order otherwise. Bought tab intentionally
+    // has no special sort — just whatever order items landed in as they got scanned/added.
+    if (currentTab === 'tobuy') {
+      categoryNames.forEach(cat => {
+        groups[cat].sort((a, b) => (a.inTrolley === b.inTrolley ? 0 : a.inTrolley ? 1 : -1));
+      });
+    }
+
     if (categoryNames.length <= 1) {
       // Flat list — no point showing a single category header.
-      State.items.forEach(i => el.list.appendChild(renderItem(i)));
+      (groups[categoryNames[0]] || []).forEach(i => el.list.appendChild(renderItem(i)));
     } else {
       sortedCategories(categoryNames).forEach(cat => {
         const color = categoryColor(cat);
@@ -429,10 +492,7 @@ function renderAll() {
 
   el.estTotal.textContent = fmt(State.estimatedTotal());
   el.troliTotal.textContent = fmt(State.trolleyTotal());
-  el.itemCount.textContent = `${State.items.length} item${State.items.length === 1 ? '' : 's'}`;
-  const pct = State.progressPercent();
-  el.railFill.style.width = `${pct}%`;
-  el.railPercent.textContent = `${pct}%`;
+  el.itemCount.textContent = `${items.length} item${items.length === 1 ? '' : 's'}`;
 
   el.cashInHand.textContent = fmt(State.cashInHand());
   el.digitalOwed.textContent = fmt(State.digitalSpent());
@@ -826,7 +886,9 @@ async function handleReceiptFile(file) {
   el.receiptScanningOverlay.classList.remove('hidden');
   try {
     const dataUrl = await compressImageForUpload(file);
-    const items = State.items.map(i => ({ id: i.id, name: i.name }));
+    // Only offer items still on the To Buy list as match candidates — items a previous
+    // receipt scan already moved to Bought (multi-stop shopping) shouldn't be re-matchable.
+    const items = State.items.filter(i => !i.scanned).map(i => ({ id: i.id, name: i.name }));
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25000);
@@ -857,7 +919,19 @@ async function handleReceiptFile(file) {
     const matches = Array.isArray(data.matches) ? data.matches : [];
     const extras = Array.isArray(data.extras) ? data.extras : [];
 
-    matches.forEach(m => State.updateItem(m.itemId, { price: m.price }));
+    // A match means the receipt confirms this list item was actually bought: rename it to the
+    // printed receipt name (the receipt is ground truth — the scratchpad/manual name was only
+    // ever a best guess), apply the scanned price, and move it to Bought (scanned + inTrolley
+    // both flip true together, since a receipt line is proof of purchase, not just a price).
+    matches.forEach(m => {
+      const existing = State.items.find(i => i.id === m.itemId);
+      State.updateItem(m.itemId, {
+        name: m.receiptName || (existing ? existing.name : undefined),
+        price: m.price,
+        scanned: true,
+        inTrolley: true
+      });
+    });
     renderAll();
     showReceiptResult(matches, extras);
   } catch (err) {
@@ -870,63 +944,101 @@ async function handleReceiptFile(file) {
   }
 }
 
-// Phase 4: "extras" (receipt line items that didn't match anything already in the list) are
-// now individually tappable — "+ Add" drops that item straight into State at the scanned
-// price instead of just being informational. Matched items stay read-only rows since their
-// price was already applied to the existing item the moment the scan came back.
+// Phase 5: "extras" (receipt line items that didn't fuzzy-match anything already on the To
+// Buy list) get a dropdown instead of a flat "+ Add" button — most real receipts have
+// abbreviations/formatting the auto-matcher won't catch (e.g. "AYAM SEGAR/KG" vs "Ayam"), so
+// the user picks the right existing item themselves, or adds it fresh if it's genuinely new.
+// Matched items stay read-only rows — handleReceiptFile() already renamed/priced/moved them
+// to Bought before this renders.
 function showReceiptResult(matches, extras) {
   const matchRows = matches.map(m => {
     const item = State.items.find(i => i.id === m.itemId);
-    const label = item ? item.name : m.itemId;
+    const label = item ? item.name : (m.receiptName || m.itemId);
     return `<li class="text-sm bg-troli-bg dark:bg-troli-bgdark rounded-xl px-3 py-2 flex items-center justify-between"><span>${escapeHtml(label)}</span><span class="font-semibold">${fmt(m.price)}</span></li>`;
   }).join('');
 
   let bodyHtml = '';
   if (matches.length) {
-    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">Prices updated (${matches.length})</p><ul class="space-y-1.5 mb-3">${matchRows}</ul>`;
+    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">Matched &amp; moved to Bought (${matches.length})</p><ul class="space-y-1.5 mb-3">${matchRows}</ul>`;
   }
   if (extras.length) {
-    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">On receipt but not in your list (${extras.length})</p><ul id="receiptExtrasList" class="space-y-1.5"></ul>`;
+    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">On receipt but not recognized (${extras.length})</p><p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-2">Assign each to an item on your To Buy list, or add it as new.</p><ul id="receiptExtrasList" class="space-y-1.5"></ul>`;
   }
   if (!matches.length && !extras.length) {
     bodyHtml = `<p class="text-sm text-troli-sub dark:text-troli-subdark">Gemini couldn't read any line items off that photo — try a clearer, well-lit shot.</p>`;
   }
 
   el.receiptBody.innerHTML = bodyHtml;
+  if (!extras.length) return;
 
-  if (extras.length) {
-    const extrasList = document.getElementById('receiptExtrasList');
-    extras.forEach((e) => {
-      const li = document.createElement('li');
-      li.className = 'text-sm bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2 flex items-center justify-between gap-2';
-      li.innerHTML = `
-        <div class="min-w-0 flex-1">
-          <p class="truncate">${escapeHtml(e.name)}</p>
-          <p class="text-[11px] text-troli-sub dark:text-troli-subdark">${fmt(e.price)}</p>
-        </div>
-        <button type="button" class="addExtraBtn shrink-0 text-xs font-semibold text-white bg-troli-orange rounded-full px-3 py-1.5 active:scale-95 transition-transform">+ Add</button>
-      `;
-      li.querySelector('.addExtraBtn').addEventListener('click', () => {
-        // New-from-receipt items land on "Me" / cash by default, qty left unset (Price is
-        // known from the receipt but a countable qty isn't) — same as any item that starts
-        // life with "Price TBD" flipped around: here price is known, qty is TBD instead.
-        State.addItem(e.name, e.price, 'me', 'cash', null, '', '');
-        renderAll();
-        const btn = li.querySelector('.addExtraBtn');
-        const addedTag = document.createElement('span');
-        addedTag.className = 'shrink-0 text-[11px] text-troli-green dark:text-troli-greenlight font-semibold';
-        addedTag.textContent = 'Added ✓';
-        btn.replaceWith(addedTag);
-        toast(`${e.name} added to list`, 'success');
-      });
-      extrasList.appendChild(li);
+  const extrasList = document.getElementById('receiptExtrasList');
+  // Candidates are whatever's still on the To Buy list right now — matches already flipped
+  // their items to scanned/Bought above, so those correctly don't show up as assignable here.
+  let candidates = State.items.filter(i => !i.scanned);
+
+  extras.forEach((e) => {
+    const li = document.createElement('li');
+    li.className = 'text-sm bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2';
+    li.innerHTML = `
+      <div class="flex items-center justify-between gap-2 mb-1.5">
+        <p class="truncate flex-1 min-w-0">${escapeHtml(e.name)}</p>
+        <span class="font-semibold shrink-0">${fmt(e.price)}</span>
+      </div>
+      <select class="assignSelect w-full bg-troli-card dark:bg-troli-carddark rounded-lg px-2 py-1.5 text-xs border border-troli-rail dark:border-troli-raildark outline-none">
+        <option value="__new__">+ Add as new item</option>
+        ${candidates.map(c => `<option value="${c.id}">Assign to: ${escapeHtml(c.name)}</option>`).join('')}
+      </select>
+    `;
+
+    const select = li.querySelector('.assignSelect');
+    select.addEventListener('change', () => {
+      const chosen = select.value;
+      if (chosen === '__new__') {
+        // qty left null/TBD on purpose — a receipt gives a confirmed price, not a countable
+        // qty, mirroring how manually-added items start with price TBD instead.
+        State.addItem(e.name, e.price, 'me', 'cash', null, '', '', true);
+        const newItem = State.items[State.items.length - 1];
+        State.updateItem(newItem.id, { inTrolley: true });
+      } else {
+        State.updateItem(chosen, { name: e.name, price: e.price, scanned: true, inTrolley: true });
+        // That item is no longer a valid target for any other still-open extra row.
+        candidates = candidates.filter(c => c.id !== chosen);
+        document.querySelectorAll('.assignSelect').forEach((otherSelect) => {
+          if (otherSelect === select) return;
+          const opt = otherSelect.querySelector(`option[value="${chosen}"]`);
+          if (opt) opt.remove();
+        });
+      }
+      renderAll();
+      const tag = document.createElement('span');
+      tag.className = 'text-[11px] text-troli-green dark:text-troli-greenlight font-semibold';
+      tag.textContent = `Added to Bought as "${e.name}" ✓`;
+      select.replaceWith(tag);
+      toast(`${e.name} added to Bought`, 'success');
     });
-  }
+
+    extrasList.appendChild(li);
+  });
 }
 el.receiptCloseBtn.addEventListener('click', () => el.receiptModal.classList.add('hidden'));
 
+// ---------- Global backdrop-click-to-close ----------
+// Every modal's root element IS its own dark backdrop (fixed inset-0 overlay), with the
+// actual card as a nested child — same structure el.addSheet already used its own backdrop
+// listener for. Extending that pattern to every other modal instead of only the ones with an
+// explicit Cancel/Close button. receiptScanningOverlay is deliberately excluded: it's an
+// active loading state mid-request, not something the user should be able to dismiss early.
+function closeAnyModal(modalEl) {
+  modalEl.classList.add('hidden');
+  if (modalEl === el.editModal) editingId = null;
+  if (modalEl === el.personModal) editingPersonId = null;
+}
+[el.personModal, el.settleModal, el.editModal, el.adjustModal, el.receiptModal, el.receiptSourceSheet].forEach((modalEl) => {
+  modalEl.addEventListener('click', (e) => { if (e.target === modalEl) closeAnyModal(modalEl); });
+});
+
 // ---------- Init ----------
 State.load();
-renderAll();
+setActiveTab('tobuy');
 checkGeminiConnection(true);
 setAddMode('structured');

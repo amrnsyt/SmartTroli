@@ -114,7 +114,7 @@ ${knownItems.map((i) => i.name).join(', ') || '(list is empty)'}`;
       }
 
       if (best) {
-        matches.push({ itemId: best.id, price: riPrice });
+        matches.push({ itemId: best.id, price: riPrice, receiptName: riName });
       } else {
         extras.push({ name: riName, price: riPrice });
       }

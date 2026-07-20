@@ -32,6 +32,15 @@ with the list.
      the header entirely into a bottom-sheet modal (`#addSheet`) opened via a floating "+"
      action button (FAB) above the footer. The list section got a larger "Your List" title, an
      elevated rounded card surface, and sticky category headers while scrolling.
+- **Phase 2.9 (THIS BUILD — bugfix, complete)**: Fixed a hard failure — every scratchpad parse
+  and every connection check was returning "Gemini API error (404)" because `/api/parse-list.js`
+  and `/api/health.js` were both hardcoded to `gemini-1.5-flash`, which Google has fully shut
+  down (confirmed via Google's official deprecations page — all Gemini 1.0 and 1.5 models now
+  404 on every request). Both files now call `gemini-3.5-flash`, the current GA flash model as
+  of this build (released May 19, 2026, no shutdown date announced). Also fixed a related bug:
+  the service worker's stale-while-revalidate fetch handler was intercepting and caching GET
+  `/api/health` responses, which could make the connection-status dot show a stale result on
+  repeat visits — `/api/` requests now always bypass the SW cache and hit the network directly.
 - **Phase 3 (next — Gemini Vision)**: Photograph-a-receipt flow — `/api/match-receipt.js`.
 - **Phase 4 (polish)**: out-of-list item popup tagging, discount/rounding tied to receipt scans.
 
@@ -58,17 +67,28 @@ with the list.
                           for the new bottom sheet, and a Gemini-only parseWithGemini() with
                           reason-specific error handling (offline/timeout/api/network) — NO
                           local fallback parser (removed in this build)
-/api/parse-list.js     -> Vercel serverless fn. Unchanged prompt: detects salutation/owner
-                          sections, classifies items into categories, keeps qty null when
-                          genuinely unstated, merges duplicate item names globally with owner
-                          promotion to "Shared".
-/api/health.js         -> Gemini connection check (unchanged from Phase 2.5).
+/api/parse-list.js     -> Vercel serverless fn. Prompt unchanged. Model string fixed:
+                          gemini-1.5-flash (shutdown, 404) -> gemini-3.5-flash (current GA).
+/api/health.js         -> Gemini connection check. Same model-string fix as parse-list.js.
 /manifest.json         -> unchanged
-/sw.js                 -> CACHE_NAME bumped v8 -> v9 (index.html/app.js changed)
+/sw.js                 -> CACHE_NAME bumped v9 -> v10. Fetch handler now excludes /api/* paths
+                          from caching entirely (always network-live, fixes stale health-check
+                          results).
 /vercel.json           -> unchanged
 /icons/*.png           -> unchanged
 /CLAUDE_STATE.md       -> this file
 ```
+
+## Gemini Model String — IMPORTANT MAINTENANCE NOTE (Phase 2.9)
+Google retires Gemini models on an aggressive, rolling cadence (see
+https://ai.google.dev/gemini-api/docs/deprecations — e.g. Gemini 2.0 Flash models were retired
+June 1, 2026, and even `gemini-2.5-flash` has an October 16, 2026 shutdown date already
+announced with `gemini-3.5-flash` as its replacement). Both `/api/parse-list.js` and
+`/api/health.js` now call **`gemini-3.5-flash`**. If Gemini calls start failing again with a
+404, check the deprecations page above for the current GA "flash" model and update both files
+(the model string appears once in each, inside the `fetch()` URL). Consider migrating to the
+`gemini-flash-latest` alias in a future pass so this stops requiring manual updates — Google's
+own docs note this alias auto-points to the current GA flash model.
 
 ## Data Model (unchanged since Phase 2.6/2.7)
 ```
@@ -164,14 +184,18 @@ mentions came from different people. Verified against the user's real example li
 
 ## Known Gaps / Next Steps
 1. **No receipt photo matching yet** — Phase 3, needs Gemini Vision + `/api/match-receipt.js`.
-2. Shared-item cost still splits evenly across all people (including "Me") — no custom ratio.
-3. Auto-created people (from salutation detection) start with `cashAdvance: 0` — user should be
+2. **Gemini model string is hardcoded, not aliased.** `gemini-3.5-flash` works today but Google
+   ships breaking model retirements every few months. Worth migrating to the `gemini-flash-latest`
+   alias (auto-points to current GA flash model) in a future pass so this class of bug can't
+   recur silently.
+3. Shared-item cost still splits evenly across all people (including "Me") — no custom ratio.
+4. Auto-created people (from salutation detection) start with `cashAdvance: 0` — user should be
    nudged to fill in the real advance amount; currently just relies on them tapping the person
    chip area manually.
-4. Scratchpad now strictly requires internet — worth double-checking the FAB/sheet UX makes it
+5. Scratchpad now strictly requires internet — worth double-checking the FAB/sheet UX makes it
    obvious to a user in a low-signal supermarket that Structured mode is the offline-safe path.
-5. `appToast` and `updateToast` still share screen position — low-priority stacking issue.
-6. FAB vertical offset (`bottom: calc(6.5rem + safe-area)`) is a fixed estimate to clear the
+6. `appToast` and `updateToast` still share screen position — low-priority stacking issue.
+7. FAB vertical offset (`bottom: calc(6.5rem + safe-area)`) is a fixed estimate to clear the
    footer — if footer content wraps to more lines on a very narrow screen, worth re-checking
    for overlap on-device.
 

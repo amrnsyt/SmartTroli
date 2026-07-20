@@ -1,6 +1,6 @@
 // SmartTroli — sw.js
 // Bump CACHE_NAME on every deploy that changes cached assets.
-const CACHE_NAME = 'smarttroli-cache-v9';
+const CACHE_NAME = 'smarttroli-cache-v10';
 const CORE_ASSETS = [
   '/',
   '/index.html',
@@ -41,6 +41,11 @@ self.addEventListener('message', (event) => {
 // so the next load is up to date.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+
+  // API calls (e.g. the Gemini connection health check) must always be live — never served
+  // from cache — or a one-time failure/success could get "stuck" on repeat visits.
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith('/api/')) return;
 
   event.respondWith(
     caches.open(CACHE_NAME).then((cache) =>

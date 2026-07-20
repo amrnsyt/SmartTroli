@@ -12,7 +12,7 @@ module.exports = async function handler(req, res) {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 7000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     // NOTE: Google retires Gemini models on a fast, rolling cadence (see
     // https://ai.google.dev/gemini-api/docs/deprecations). If this starts 404ing again,

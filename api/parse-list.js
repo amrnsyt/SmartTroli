@@ -80,6 +80,11 @@ ${text}
     // NOTE: Google retires Gemini models on a fast, rolling cadence (see
     // https://ai.google.dev/gemini-api/docs/deprecations). If this starts 404ing again,
     // check that page for the current GA "flash" model and update the URL below.
+    // Explicit timeout, kept comfortably under this function's vercel.json maxDuration (30s),
+    // so a slow Gemini response returns our own clean JSON error instead of Vercel's raw 504.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 22000);
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
       {
@@ -91,9 +96,11 @@ ${text}
             responseMimeType: 'application/json',
             temperature: 0.2
           }
-        })
+        }),
+        signal: controller.signal
       }
     );
+    clearTimeout(timeout);
 
     if (!response.ok) {
       const errText = await response.text();
@@ -135,6 +142,10 @@ ${text}
 
     res.status(200).json({ items: cleaned });
   } catch (err) {
+    if (err.name === 'AbortError') {
+      res.status(504).json({ error: 'Gemini took too long to respond (server-side timeout after 22s).' });
+      return;
+    }
     res.status(500).json({ error: 'Server error calling Gemini.', detail: String(err) });
   }
 };

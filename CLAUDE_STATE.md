@@ -41,6 +41,18 @@ with the list.
   the service worker's stale-while-revalidate fetch handler was intercepting and caching GET
   `/api/health` responses, which could make the connection-status dot show a stale result on
   repeat visits — `/api/` requests now always bypass the SW cache and hit the network directly.
+- **Phase 2.10 (THIS BUILD — bugfix, complete)**: Fixed a second stacked issue that showed up
+  after the Phase 2.9 model fix — scratchpad parses were failing with "Gemini took too long to
+  respond (timeout)". Root cause: `vercel.json` never configured `functions.maxDuration`, so
+  `/api/parse-list.js` was running under Vercel's default ~10s execution limit — too short for
+  a long, category-classifying Gemini prompt, especially on a cold start. Vercel would kill the
+  function with a raw 504 before Gemini finished. Fixed by adding explicit `maxDuration` to
+  `vercel.json` (30s for parse-list, 15s for health), adding an explicit `AbortController`
+  timeout inside `parse-list.js` itself (22s, safely under its 30s budget) so a genuinely slow
+  Gemini call now returns our own clean JSON error instead of Vercel's raw 504, and raising the
+  client-side fetch timeouts in `app.js` (scratchpad: 12s → 25s, connection check: 8s → 12s) and
+  the internal timeout in `health.js` (7s → 10s) so every layer's timeout is comfortably nested
+  inside the layer above it.
 - **Phase 3 (next — Gemini Vision)**: Photograph-a-receipt flow — `/api/match-receipt.js`.
 - **Phase 4 (polish)**: out-of-list item popup tagging, discount/rounding tied to receipt scans.
 
@@ -71,13 +83,34 @@ with the list.
                           gemini-1.5-flash (shutdown, 404) -> gemini-3.5-flash (current GA).
 /api/health.js         -> Gemini connection check. Same model-string fix as parse-list.js.
 /manifest.json         -> unchanged
-/sw.js                 -> CACHE_NAME bumped v9 -> v10. Fetch handler now excludes /api/* paths
-                          from caching entirely (always network-live, fixes stale health-check
-                          results).
-/vercel.json           -> unchanged
+/sw.js                 -> CACHE_NAME bumped v9 -> v10 -> v11 (latest: app.js timeout values
+                          changed). Fetch handler excludes /api/* paths from caching entirely
+                          (always network-live, fixes stale health-check results).
+/vercel.json           -> NOW HAS a "functions" block setting maxDuration: 30s for
+                          api/parse-list.js and 15s for api/health.js (previously only had
+                          cache-control "headers" — Vercel's default function timeout, ~10s,
+                          was silently killing slow Gemini calls before this).
 /icons/*.png           -> unchanged
 /CLAUDE_STATE.md       -> this file
 ```
+
+## Timeout Budget — IMPORTANT MAINTENANCE NOTE (Phase 2.10)
+Every timeout in this chain must be nested correctly, outside-in, or the outer layer kills the
+request with an unhelpful raw error (like a platform 504) before the inner layer gets a chance
+to fail cleanly with our own JSON error message. Current chain:
+```
+Vercel functions.maxDuration (vercel.json)        parse-list: 30s   |   health: 15s
+  └─ In-file AbortController (api/*.js)            parse-list: 22s   |   health: 10s
+       └─ Client fetch AbortController (app.js)     scratchpad: 25s  |  connection: 12s
+```
+The ordering that matters: the **server's own in-file timeout must fire before**
+`functions.maxDuration` would (22s < 30s, 10s < 15s), so the API always gets to return a clean
+JSON error instead of letting Vercel kill it with a raw 504. The **client's fetch timeout is
+set slightly longer** than the server's in-file timeout (25s > 22s, 12s > 10s) so that in the
+normal case the server's own error response arrives and gets parsed before the client's
+AbortController would fire; the client timeout only acts as a last-resort safety net for cases
+where no response arrives at all (e.g. the function crashes outright). If any of these three
+numbers are changed, re-verify this nesting order still holds.
 
 ## Gemini Model String — IMPORTANT MAINTENANCE NOTE (Phase 2.9)
 Google retires Gemini models on an aggressive, rolling cadence (see

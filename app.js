@@ -444,7 +444,7 @@ async function checkGeminiConnection(silent = false) {
   el.geminiDot.className = 'inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark animate-pulse';
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 12000);
     const res = await fetch('/api/health', { signal: controller.signal });
     clearTimeout(timeout);
     const data = await res.json();
@@ -543,7 +543,7 @@ async function parseWithGemini(rawText) {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 25000);
   try {
     const res = await fetch('/api/parse-list', {
       method: 'POST',

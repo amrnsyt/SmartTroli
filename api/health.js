@@ -14,9 +14,9 @@ module.exports = async function handler(req, res) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    // NOTE: Google retires Gemini models on a fast, rolling cadence (see
-    // https://ai.google.dev/gemini-api/docs/deprecations). If this starts 404ing again,
-    // check that page for the current GA "flash" model and update the URL below.
+    // NOTE (Phase 2.11): thinkingLevel: 'low' avoids gemini-3.5-flash's default medium-thinking
+    // latency, which was slow enough on its own to make even this trivial ping time out.
+    // See the matching note in parse-list.js for the full explanation.
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
       {
@@ -24,7 +24,7 @@ module.exports = async function handler(req, res) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: 'Reply with exactly: OK' }] }],
-          generationConfig: { maxOutputTokens: 5 }
+          generationConfig: { maxOutputTokens: 32, thinkingConfig: { thinkingLevel: 'low' } }
         }),
         signal: controller.signal
       }

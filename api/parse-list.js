@@ -77,9 +77,12 @@ ${text}
 """`;
 
   try {
-    // NOTE: Google retires Gemini models on a fast, rolling cadence (see
-    // https://ai.google.dev/gemini-api/docs/deprecations). If this starts 404ing again,
-    // check that page for the current GA "flash" model and update the URL below.
+    // NOTE (Phase 2.11): gemini-3.5-flash has "thinking" ON by default (thinkingLevel:
+    // "medium"), which was adding enough per-request reasoning latency to blow past our
+    // 22s in-file abort / 30s Vercel maxDuration and surface as a raw 504. thinkingLevel:
+    // "low" (Gemini 3 series can't fully disable thinking, unlike 2.5's thinkingBudget:0)
+    // keeps this fast enough for a JSON-extraction task. If 404s return, check
+    // https://ai.google.dev/gemini-api/docs/deprecations for the current GA flash model.
     // Explicit timeout, kept comfortably under this function's vercel.json maxDuration (30s),
     // so a slow Gemini response returns our own clean JSON error instead of Vercel's raw 504.
     const controller = new AbortController();
@@ -94,7 +97,8 @@ ${text}
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             responseMimeType: 'application/json',
-            temperature: 0.2
+            temperature: 0.2,
+            thinkingConfig: { thinkingLevel: 'low' }
           }
         }),
         signal: controller.signal

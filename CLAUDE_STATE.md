@@ -53,6 +53,20 @@ with the list.
   client-side fetch timeouts in `app.js` (scratchpad: 12s → 25s, connection check: 8s → 12s) and
   the internal timeout in `health.js` (7s → 10s) so every layer's timeout is comfortably nested
   inside the layer above it.
+- **Phase 2.11 (THIS BUILD — bugfix, complete)**: Fixed the real cause of the recurring
+`/api/parse-list` 504s (confirmed via Vercel logs). It was **not** the model string —
+`gemini-3.5-flash` is a valid, current GA model. The actual cause: Gemini 3.5 Flash ships
+with **"thinking" ON by default** (`thinkingLevel: "medium"`), unlike the old
+`gemini-1.5-flash`, which had no thinking step at all. That extra reasoning pass was adding
+enough per-request latency to a categorization/JSON-extraction prompt to blow past the 22s
+in-file `AbortController` and/or the 30s `vercel.json` `maxDuration`, surfacing as a raw
+platform 504 instead of (or in addition to) our own clean JSON timeout error. Fixed by adding
+`generationConfig.thinkingConfig: { thinkingLevel: "low" }` to both `/api/parse-list.js` and
+`/api/health.js` — Gemini 3-series models can't fully disable thinking (no
+`thinkingBudget: 0` equivalent like 2.5-series had), but `"low"` cuts the reasoning pass
+enough to comfortably fit the existing timeout budget. Also bumped `health.js`'s
+`maxOutputTokens` from 5 → 32, since thinking tokens are counted against that budget even at
+low level and 5 was too tight (risk of silently truncated/empty replies).
 - **Phase 3 (next — Gemini Vision)**: Photograph-a-receipt flow — `/api/match-receipt.js`.
 - **Phase 4 (polish)**: out-of-list item popup tagging, discount/rounding tied to receipt scans.
 
@@ -79,9 +93,13 @@ with the list.
                           for the new bottom sheet, and a Gemini-only parseWithGemini() with
                           reason-specific error handling (offline/timeout/api/network) — NO
                           local fallback parser (removed in this build)
-/api/parse-list.js     -> Vercel serverless fn. Prompt unchanged. Model string fixed:
-                          gemini-1.5-flash (shutdown, 404) -> gemini-3.5-flash (current GA).
-/api/health.js         -> Gemini connection check. Same model-string fix as parse-list.js.
+/api/parse-list.js     -> Vercel serverless fn. Prompt unchanged. Model: gemini-3.5-flash.
+                          Phase 2.11: generationConfig now sets thinkingConfig.thinkingLevel
+                          = "low" — the real fix for the recurring 504s (thinking latency,
+                          not the model string, which was already correct/current).
+/api/health.js         -> Gemini connection check. Same thinkingLevel: "low" fix as
+                          parse-list.js. maxOutputTokens raised 5 -> 32 (thinking tokens eat
+                          into this budget even at low level).
 /manifest.json         -> unchanged
 /sw.js                 -> CACHE_NAME bumped v9 -> v10 -> v11 (latest: app.js timeout values
                           changed). Fetch handler excludes /api/* paths from caching entirely
@@ -122,6 +140,16 @@ announced with `gemini-3.5-flash` as its replacement). Both `/api/parse-list.js`
 (the model string appears once in each, inside the `fetch()` URL). Consider migrating to the
 `gemini-flash-latest` alias in a future pass so this stops requiring manual updates — Google's
 own docs note this alias auto-points to the current GA flash model.
+
+**Thinking-latency gotcha (Phase 2.11):** a 404 is not the only failure mode a model swap can
+introduce. Gemini 2.5-series and later models "think" by default before replying (Gemini
+3-series uses `generationConfig.thinkingConfig.thinkingLevel`, default `"medium"`; 2.5-series
+used `thinkingBudget`, default dynamic). A model swap can silently turn a previously-fast
+endpoint slow under the exact same code, because the model itself got slower — not because
+anything actually broke. Both `/api/parse-list.js` and `/api/health.js` now explicitly set
+`thinkingLevel: "low"` (Gemini 3-series can't fully disable thinking like 2.5-series could
+with `thinkingBudget: 0`). If a future model swap reintroduces slowness/504s, check the new
+model's thinking defaults FIRST before assuming it's a timeout-budget or network problem.
 
 ## Data Model (unchanged since Phase 2.6/2.7)
 ```

@@ -161,11 +161,23 @@ const el = {
   modeStructuredBtn: document.getElementById('modeStructuredBtn'),
   modeScratchBtn: document.getElementById('modeScratchBtn'),
   scratchWrap: document.getElementById('scratchWrap'),
+  scratchInputWrap: document.getElementById('scratchInputWrap'),
   scratchText: document.getElementById('scratchText'),
   scratchParseBtn: document.getElementById('scratchParseBtn'),
   scratchSkeleton: document.getElementById('scratchSkeleton'),
   scratchError: document.getElementById('scratchError'),
+  scratchPreviewWrap: document.getElementById('scratchPreviewWrap'),
+  scratchPreviewList: document.getElementById('scratchPreviewList'),
+  scratchPreviewCount: document.getElementById('scratchPreviewCount'),
+  scratchBackBtn: document.getElementById('scratchBackBtn'),
+  scratchConfirmBtn: document.getElementById('scratchConfirmBtn'),
   structuredForm: document.getElementById('structuredFormWrap'),
+  scanReceiptBtn: document.getElementById('scanReceiptBtn'),
+  receiptFileInput: document.getElementById('receiptFileInput'),
+  receiptScanningOverlay: document.getElementById('receiptScanningOverlay'),
+  receiptModal: document.getElementById('receiptModal'),
+  receiptBody: document.getElementById('receiptBody'),
+  receiptCloseBtn: document.getElementById('receiptCloseBtn'),
   // modals
   personModal: document.getElementById('personModal'),
   personName: document.getElementById('personName'),
@@ -496,7 +508,7 @@ el.settleBtn.addEventListener('click', () => {
 el.settleCloseBtn.addEventListener('click', () => el.settleModal.classList.add('hidden'));
 
 // ---------- Dynamic Scratchpad (local naive parser — Gemini AI parsing is Phase 2) ----------
-function openAddSheet() { el.addSheet.classList.remove('hidden'); }
+function openAddSheet() { resetScratchPreview(); el.addSheet.classList.remove('hidden'); }
 function closeAddSheet() { el.addSheet.classList.add('hidden'); }
 
 el.addFab.addEventListener('click', openAddSheet);
@@ -606,7 +618,64 @@ el.scratchParseBtn.addEventListener('click', async () => {
     return;
   }
 
-  parsed.forEach(p => {
+  renderScratchPreview(parsed);
+});
+
+// ---------- Scratch review step (Gemini's extracted qty is editable before it hits the list) ----------
+let pendingParsed = null;
+
+function ownerLabelFor(ownerName) {
+  if (ownerName && ownerName.trim().toLowerCase() === 'shared') return 'Shared (Kongsi)';
+  if (ownerName) return ownerName;
+  return 'Me';
+}
+
+function renderScratchPreview(items) {
+  pendingParsed = items.map(p => ({ ...p })); // clone so the user can freely edit before committing
+  el.scratchPreviewList.innerHTML = pendingParsed.map((p, idx) => `
+    <div class="flex items-center gap-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-3 py-2 border border-troli-rail dark:border-troli-raildark">
+      <div class="flex-1 min-w-0">
+        <p class="text-sm truncate">${escapeHtml(p.name)}</p>
+        <p class="text-[10px] text-troli-sub dark:text-troli-subdark truncate">${escapeHtml(ownerLabelFor(p.ownerName))}${p.category ? ' · ' + escapeHtml(p.category) : ''}</p>
+      </div>
+      <input type="number" step="0.5" min="0" placeholder="Qty" value="${p.qty === null || p.qty === undefined ? '' : p.qty}"
+        data-role="preview-qty" data-idx="${idx}"
+        class="w-16 shrink-0 bg-troli-card dark:bg-troli-carddark rounded-lg px-2 py-1.5 text-sm text-center border border-troli-rail dark:border-troli-raildark outline-none focus:border-troli-green dark:focus:border-troli-greenlight" />
+      <input type="text" placeholder="unit" value="${escapeHtml(p.unit || '')}"
+        data-role="preview-unit" data-idx="${idx}"
+        class="w-14 shrink-0 bg-troli-card dark:bg-troli-carddark rounded-lg px-1.5 py-1.5 text-[11px] text-center border border-troli-rail dark:border-troli-raildark outline-none" />
+    </div>
+  `).join('');
+  el.scratchPreviewCount.textContent = `${pendingParsed.length} item${pendingParsed.length === 1 ? '' : 's'} detected`;
+  el.scratchInputWrap.classList.add('hidden');
+  el.scratchPreviewWrap.classList.remove('hidden');
+}
+
+function resetScratchPreview() {
+  pendingParsed = null;
+  el.scratchPreviewList.innerHTML = '';
+  el.scratchPreviewWrap.classList.add('hidden');
+  el.scratchInputWrap.classList.remove('hidden');
+}
+
+el.scratchBackBtn.addEventListener('click', resetScratchPreview);
+
+el.scratchConfirmBtn.addEventListener('click', () => {
+  if (!pendingParsed || pendingParsed.length === 0) return;
+
+  // Pull whatever the user last typed into each qty/unit box — this is the whole point of the
+  // review step, so read straight from the inputs rather than trusting Gemini's original values.
+  el.scratchPreviewList.querySelectorAll('[data-role="preview-qty"]').forEach(input => {
+    const idx = parseInt(input.dataset.idx, 10);
+    if (pendingParsed[idx]) pendingParsed[idx].qty = input.value === '' ? null : parseFloat(input.value);
+  });
+  el.scratchPreviewList.querySelectorAll('[data-role="preview-unit"]').forEach(input => {
+    const idx = parseInt(input.dataset.idx, 10);
+    if (pendingParsed[idx]) pendingParsed[idx].unit = input.value;
+  });
+
+  const items = pendingParsed;
+  items.forEach(p => {
     let ownerId;
     if (p.ownerName && p.ownerName.trim().toLowerCase() === 'shared') {
       ownerId = 'shared';
@@ -617,17 +686,114 @@ el.scratchParseBtn.addEventListener('click', async () => {
     }
     State.addItem(p.name, p.price || 0, ownerId, 'cash', p.qty, p.unit || '', p.category || '');
   });
+
   el.scratchText.value = '';
+  resetScratchPreview();
   closeAddSheet();
   renderAll();
 
-  const newPeople = [...new Set(parsed.map(p => p.ownerName).filter(n => n && n.toLowerCase() !== 'shared'))];
-  const combinedCount = parsed.filter(p => p.ownerName && p.ownerName.toLowerCase() === 'shared').length;
+  const newPeople = [...new Set(items.map(p => p.ownerName).filter(n => n && n.toLowerCase() !== 'shared'))];
+  const combinedCount = items.filter(p => p.ownerName && p.ownerName.toLowerCase() === 'shared').length;
   const peopleNote = newPeople.length ? ` Tagged to: ${newPeople.join(', ')}.` : '';
   const combinedNote = combinedCount ? ` ${combinedCount} combined into Shared.` : '';
 
-  toast(`Gemini parsed ${parsed.length} item(s), sorted by category.${peopleNote}${combinedNote}`, 'success');
+  toast(`Added ${items.length} item(s), sorted by category.${peopleNote}${combinedNote}`, 'success');
 });
+
+// ---------- Phase 3 — Gemini Vision receipt scan ----------
+// Photographs a receipt, matches each printed line item to an existing list item by name,
+// and auto-fills its price. Line items on the receipt that don't match anything in the list
+// are reported for the user's awareness only — adding them as new items is Phase 4.
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result); // data: URL — server strips the prefix
+    reader.onerror = () => reject(new Error('Could not read the photo file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+el.scanReceiptBtn.addEventListener('click', () => {
+  if (!navigator.onLine) {
+    toast('No internet connection — receipt scanning needs Gemini.', 'error');
+    return;
+  }
+  el.receiptFileInput.value = '';
+  el.receiptFileInput.click();
+});
+
+el.receiptFileInput.addEventListener('change', async () => {
+  const file = el.receiptFileInput.files && el.receiptFileInput.files[0];
+  if (!file) return;
+
+  el.receiptScanningOverlay.classList.remove('hidden');
+  try {
+    const dataUrl = await fileToBase64(file);
+    const items = State.items.map(i => ({ id: i.id, name: i.name }));
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25000);
+    let res;
+    try {
+      res = await fetch('/api/match-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl, mimeType: file.type || 'image/jpeg', items }),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.json()).error || ''; } catch (e) { /* ignore */ }
+      throw new Error(detail ? `Gemini API error: ${detail}` : `Gemini API error (${res.status}).`);
+    }
+
+    const data = await res.json();
+    const matches = Array.isArray(data.matches) ? data.matches : [];
+    const extras = Array.isArray(data.extras) ? data.extras : [];
+
+    matches.forEach(m => State.updateItem(m.itemId, { price: m.price }));
+    renderAll();
+    showReceiptResult(matches, extras);
+  } catch (err) {
+    const msg = err.name === 'AbortError'
+      ? 'Gemini took too long to read the receipt (timeout). Try a clearer photo or better lighting.'
+      : (err.message || 'Could not read the receipt. Check your connection and try again.');
+    toast(msg, 'error');
+  } finally {
+    el.receiptScanningOverlay.classList.add('hidden');
+  }
+});
+
+function showReceiptResult(matches, extras) {
+  const matchRows = matches.map(m => {
+    const item = State.items.find(i => i.id === m.itemId);
+    const label = item ? item.name : m.itemId;
+    return `<li class="text-sm bg-troli-bg dark:bg-troli-bgdark rounded-xl px-3 py-2 flex items-center justify-between"><span>${escapeHtml(label)}</span><span class="font-semibold">${fmt(m.price)}</span></li>`;
+  }).join('');
+
+  const extraRows = extras.map(e =>
+    `<li class="text-sm bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2 flex items-center justify-between"><span>${escapeHtml(e.name)}</span><span class="font-semibold">${fmt(e.price)}</span></li>`
+  ).join('');
+
+  let bodyHtml = '';
+  if (matches.length) {
+    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">Prices updated (${matches.length})</p><ul class="space-y-1.5 mb-3">${matchRows}</ul>`;
+  }
+  if (extras.length) {
+    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">On receipt but not in your list (${extras.length})</p><ul class="space-y-1.5">${extraRows}</ul>`;
+  }
+  if (!matches.length && !extras.length) {
+    bodyHtml = `<p class="text-sm text-troli-sub dark:text-troli-subdark">Gemini couldn't read any line items off that photo — try a clearer, well-lit shot.</p>`;
+  }
+
+  el.receiptBody.innerHTML = bodyHtml;
+  el.receiptModal.classList.remove('hidden');
+}
+el.receiptCloseBtn.addEventListener('click', () => el.receiptModal.classList.add('hidden'));
 
 // ---------- Init ----------
 State.load();

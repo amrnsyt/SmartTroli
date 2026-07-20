@@ -70,6 +70,8 @@
     <div class="mt-2 flex items-center gap-2">
       <button id="addPersonBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">+ Person</button>
       <button id="adjustBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">⚙️ Adjust</button>
+      <button id="scanReceiptBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">📸 Scan Receipt</button>
+      <input id="receiptFileInput" type="file" accept="image/*" capture="environment" class="hidden" />
       <button id="settleBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-green dark:bg-troli-greenlight text-white rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0 ml-auto">Arahan Malas 🧮</button>
     </div>
   </header>
@@ -155,27 +157,43 @@
 
       <!-- Dynamic Scratchpad — Gemini required, no offline fallback -->
       <div id="scratchWrap" class="hidden">
-        <textarea id="scratchText" rows="6" placeholder="Paste your messy WhatsApp list here. e.g.&#10;KICAP&#10;UBI 3 BIJI&#10;CARROT 1&#10;PISANG&#10;&#10;Abah :&#10;Ayam sekoq potong kecik&#10;Bawang kecik"
-          class="w-full bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark"></textarea>
+        <div id="scratchInputWrap">
+          <textarea id="scratchText" rows="6" placeholder="Paste your messy WhatsApp list here. e.g.&#10;KICAP&#10;UBI 3 BIJI&#10;CARROT 1&#10;PISANG&#10;&#10;Abah :&#10;Ayam sekoq potong kecik&#10;Bawang kecik"
+            class="w-full bg-troli-card dark:bg-troli-carddark rounded-2xl px-4 py-3 text-sm border border-troli-rail dark:border-troli-raildark outline-none placeholder:text-troli-sub dark:placeholder:text-troli-subdark"></textarea>
 
-        <!-- Skeleton pulse shown while Gemini parses -->
-        <div id="scratchSkeleton" class="hidden mt-2 space-y-2">
-          <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
-          <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
-          <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse w-2/3"></div>
+          <!-- Skeleton pulse shown while Gemini parses -->
+          <div id="scratchSkeleton" class="hidden mt-2 space-y-2">
+            <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
+            <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse"></div>
+            <div class="h-10 rounded-xl bg-troli-rail dark:bg-troli-raildark animate-pulse w-2/3"></div>
+          </div>
+
+          <!-- Persistent error banner — Gemini is required for this mode, no silent fallback -->
+          <div id="scratchError" class="hidden mt-2 text-xs text-troli-orange bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2"></div>
+
+          <div class="flex items-center justify-between mt-2">
+            <button id="geminiCheckBtn" type="button" class="flex items-center gap-1.5 text-[10px] text-troli-sub dark:text-troli-subdark">
+              <span id="geminiDot" class="inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark"></span>
+              ✨ Gemini · tap to check connection
+            </button>
+            <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform disabled:opacity-50">Parse into list</button>
+          </div>
+          <p class="text-[10px] text-troli-sub dark:text-troli-subdark mt-1">Requires internet — Gemini detects owner tags like "Abah :", sorts by category, and combines duplicates across lists. No offline mode for this feature.</p>
         </div>
 
-        <!-- Persistent error banner — Gemini is required for this mode, no silent fallback -->
-        <div id="scratchError" class="hidden mt-2 text-xs text-troli-orange bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2"></div>
-
-        <div class="flex items-center justify-between mt-2">
-          <button id="geminiCheckBtn" type="button" class="flex items-center gap-1.5 text-[10px] text-troli-sub dark:text-troli-subdark">
-            <span id="geminiDot" class="inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark"></span>
-            ✨ Gemini · tap to check connection
-          </button>
-          <button id="scratchParseBtn" type="button" class="text-xs font-semibold bg-troli-orange text-white rounded-full px-4 py-2 active:scale-95 transition-transform disabled:opacity-50">Parse into list</button>
+        <!-- Review step — Gemini's extracted qty (and unit) is editable here before anything is
+             added to the actual list, since Gemini sometimes gets a quantity wrong or misses one. -->
+        <div id="scratchPreviewWrap" class="hidden">
+          <div class="flex items-center justify-between mb-2">
+            <h4 class="text-xs font-semibold text-troli-sub dark:text-troli-subdark uppercase tracking-wider">Review qty before adding</h4>
+            <span id="scratchPreviewCount" class="text-[10px] text-troli-sub dark:text-troli-subdark"></span>
+          </div>
+          <div id="scratchPreviewList" class="space-y-2 max-h-64 overflow-y-auto pr-1"></div>
+          <div class="flex gap-2 mt-3">
+            <button id="scratchBackBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Back</button>
+            <button id="scratchConfirmBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 bg-troli-green dark:bg-troli-greenlight text-white font-semibold">Add to List</button>
+          </div>
         </div>
-        <p class="text-[10px] text-troli-sub dark:text-troli-subdark mt-1">Requires internet — Gemini detects owner tags like "Abah :", sorts by category, and combines duplicates across lists. No offline mode for this feature.</p>
       </div>
     </div>
   </div>
@@ -200,6 +218,24 @@
       <p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-4">One clear instruction per person — no spreadsheets.</p>
       <div id="settleBody"></div>
       <button id="settleCloseBtn" type="button" class="w-full mt-4 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Close</button>
+    </div>
+  </div>
+
+  <!-- Receipt Scanning Overlay (shown while Gemini Vision reads the photo) -->
+  <div id="receiptScanningOverlay" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+    <div class="bg-troli-card dark:bg-troli-carddark rounded-2xl px-6 py-5 flex items-center gap-3 shadow-lg">
+      <div class="w-5 h-5 rounded-full border-2 border-troli-green dark:border-troli-greenlight border-t-transparent animate-spin"></div>
+      <span class="text-sm">Reading your receipt…</span>
+    </div>
+  </div>
+
+  <!-- Receipt Scan Result Modal -->
+  <div id="receiptModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5 max-h-[80vh] overflow-y-auto">
+      <h3 class="font-display text-lg mb-1">Receipt Scanned</h3>
+      <p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-4">Prices below were auto-filled from your receipt.</p>
+      <div id="receiptBody"></div>
+      <button id="receiptCloseBtn" type="button" class="w-full mt-4 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Close</button>
     </div>
   </div>
 

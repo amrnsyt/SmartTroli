@@ -75,8 +75,34 @@ manual full reload. Now `reg.update()` also fires immediately on registration, o
 `visibilitychange` (tab/app foregrounded again), and on `pageshow` (bfcache restores). No
 change to the underlying skipWaiting/waiting-worker flow — user still taps "Update Now" to
 apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable new version.
-- **Phase 3 (next — Gemini Vision)**: Photograph-a-receipt flow — `/api/match-receipt.js`.
-- **Phase 4 (polish)**: out-of-list item popup tagging, discount/rounding tied to receipt scans.
+- **Phase 2.13 (THIS BUILD — complete)**: Gemini's extracted **qty (and unit) is now editable
+  before it's added to the list.** Previously `parseWithGemini()`'s results were committed to
+  `State` immediately on a successful parse. Now a successful parse renders a review step
+  (`#scratchPreviewWrap`) inside the scratchpad panel: one row per detected item (name, owner/
+  category context) with an editable Qty and Unit input, pre-filled with Gemini's values. The
+  user can correct a wrong/missing qty right there, tap "Back" to return to the raw text (e.g.
+  to re-word and re-parse), or tap "Add to List" to commit — which reads the live input values
+  (not Gemini's originals) before calling `State.addItem()`/`State.findOrCreatePerson()`. No
+  change to the underlying parse call, dedupe/merge behavior, or owner-tagging — this only adds
+  a correction step between "Gemini responded" and "items hit the list."
+- **Phase 3 (THIS BUILD — first pass complete — Gemini Vision)**: Photograph-a-receipt flow.
+  New `/api/match-receipt.js` (Vercel fn, same timeout-budget convention as `parse-list.js`:
+  22s in-file abort, 30s `vercel.json` maxDuration, `thinkingLevel: "low"`) takes a base64 photo
+  + the user's current item list (id+name only) and sends both to `gemini-3.5-flash` as a
+  multimodal request. Gemini reads each printed line item + price off the receipt and either
+  matches it to an existing list item by (fuzzy) name — returned as `{itemId, price}` — or, if
+  nothing matches, returns it as an `extra` — `{name, price}` — for the user's awareness only.
+  New "📸 Scan Receipt" header button opens a camera-capable file input
+  (`capture="environment"`); on photo select, `app.js` reads it to a data URL, POSTs to the new
+  endpoint, applies every match via `State.updateItem(id, { price })`, and shows a
+  `#receiptModal` summarizing what got auto-priced and what was on the receipt but not in the
+  list. **Adding those "extra" receipt lines into the list is intentionally NOT done in this
+  pass** — that's the popup-tagging flow already scoped for Phase 4 below, so it isn't
+  duplicated here.
+- **Phase 4 (next — polish)**: turn Phase 3's "extras" (receipt lines that didn't match
+  anything) into a tap-to-add popup instead of read-only info; tie discount/rounding
+  adjustments to receipt scans; custom shared-split ratios; cash-advance nudge for
+  auto-created people; toast-stacking fix; FAB position tuning on-device.
 
 ## Stack
 - Vanilla HTML5, Tailwind CSS (CDN), Modular Vanilla JS
@@ -88,22 +114,30 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
 ## File Structure
 ```
 /index.html           -> App shell — COMPACT header (branding, Clear, progress rail, people
-                          chips, +Person/Adjust/Settle actions only), list as primary content
-                          (elevated card, sticky category headers, larger title), floating "+"
-                          add button, #addSheet bottom-sheet modal (mode switch buttons +
-                          structured form + Gemini-only scratchpad w/ skeleton loader,
-                          connection dot, and persistent error banner), Person/Edit/Adjust/
-                          Settlement modals, generic Toast, update-toast. Phase 2.12: SW
-                          update check (reg.update()) now also fires on visibilitychange +
-                          pageshow + immediately on register, not just a 60s interval — so the
-                          toast shows up reliably after a mobile PWA resumes from background.
+                          chips, +Person/Adjust/Scan Receipt/Settle actions only), list as
+                          primary content (elevated card, sticky category headers, larger
+                          title), floating "+" add button, #addSheet bottom-sheet modal (mode
+                          switch buttons + structured form + Gemini-only scratchpad w/ skeleton
+                          loader, connection dot, persistent error banner, and — Phase 2.13 —
+                          an editable qty/unit review step (#scratchPreviewWrap) shown after a
+                          successful parse, before anything is committed), Person/Edit/Adjust/
+                          Settlement modals, generic Toast, update-toast. Phase 2.12: SW update
+                          check (reg.update()) now also fires on visibilitychange + pageshow +
+                          immediately on register, not just a 60s interval. Phase 3: hidden
+                          camera-capable #receiptFileInput + #receiptScanningOverlay spinner +
+                          #receiptModal summarizing auto-priced items and unmatched extras.
 /app.js                -> State (items+people+adjustments), normalizeQty(), category grouping
                           in renderAll() w/ sticky headers, findOrCreatePerson(), settlement
                           engine, Edit modal, Adjustments modal, Gemini connection check,
                           toast(), swipe gestures, openAddSheet()/closeAddSheet()/setAddMode()
-                          for the new bottom sheet, and a Gemini-only parseWithGemini() with
+                          for the bottom sheet, and a Gemini-only parseWithGemini() with
                           reason-specific error handling (offline/timeout/api/network) — NO
-                          local fallback parser (removed in this build)
+                          local fallback parser. Phase 2.13: renderScratchPreview()/
+                          resetScratchPreview() + scratchConfirmBtn/scratchBackBtn handlers —
+                          parse result now lands in an editable review list (pendingParsed)
+                          instead of being committed to State immediately. Phase 3:
+                          fileToBase64(), scanReceiptBtn/receiptFileInput handlers calling
+                          /api/match-receipt, showReceiptResult() rendering the result modal.
 /api/parse-list.js     -> Vercel serverless fn. Prompt unchanged. Model: gemini-3.5-flash.
                           Phase 2.11: generationConfig now sets thinkingConfig.thinkingLevel
                           = "low" — the real fix for the recurring 504s (thinking latency,
@@ -111,14 +145,16 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
 /api/health.js         -> Gemini connection check. Same thinkingLevel: "low" fix as
                           parse-list.js. maxOutputTokens raised 5 -> 32 (thinking tokens eat
                           into this budget even at low level).
+/api/match-receipt.js  -> NEW (Phase 3). Vercel serverless fn, Gemini Vision. Takes a base64
+                          receipt photo + the user's {id,name} item list, returns {matches:
+                          [{itemId,price}], extras:[{name,price}]}. Same timeout-budget
+                          convention and thinkingLevel: "low" as parse-list.js.
 /manifest.json         -> unchanged
-/sw.js                 -> CACHE_NAME bumped v11 -> v12 (Phase 2.12: index.html update-check
-                          patch). Fetch handler excludes /api/* paths from caching entirely
-                          (always network-live, fixes stale health-check results).
-/vercel.json           -> NOW HAS a "functions" block setting maxDuration: 30s for
-                          api/parse-list.js and 15s for api/health.js (previously only had
-                          cache-control "headers" — Vercel's default function timeout, ~10s,
-                          was silently killing slow Gemini calls before this).
+/sw.js                 -> CACHE_NAME bumped v11 -> v12 -> v13 (latest: Phase 2.13/3 index.html
+                          + app.js changes). Fetch handler excludes /api/* paths from caching
+                          entirely (always network-live, fixes stale health-check results).
+/vercel.json           -> "functions" block: maxDuration 30s for api/parse-list.js, 15s for
+                          api/health.js, 30s for the new api/match-receipt.js (Phase 3).
 /icons/*.png           -> unchanged
 /CLAUDE_STATE.md       -> this file
 ```
@@ -253,9 +289,13 @@ mentions came from different people. Verified against the user's real example li
 - [x] Auto owner-tagging from detected salutations, with auto-created Person records
 - [x] Cross-owner duplicate merging with implicit qty=1 and owner promotion to Shared
 - [x] List-first layout: compact header, FAB + bottom-sheet for adding items
+- [x] Scratchpad review step — Gemini's extracted qty/unit editable before commit to the list
+- [x] Gemini Vision receipt scan — photo → matched prices auto-filled, unmatched extras shown
 
 ## Known Gaps / Next Steps
-1. **No receipt photo matching yet** — Phase 3, needs Gemini Vision + `/api/match-receipt.js`.
+1. **Receipt "extras" are read-only (Phase 4 territory).** `/api/match-receipt.js` returns
+   unmatched receipt lines, and `#receiptModal` displays them, but there's no tap-to-add
+   action yet — the user still has to add those manually via the structured form.
 2. **Gemini model string is hardcoded, not aliased.** `gemini-3.5-flash` works today but Google
    ships breaking model retirements every few months. Worth migrating to the `gemini-flash-latest`
    alias (auto-points to current GA flash model) in a future pass so this class of bug can't
@@ -264,18 +304,25 @@ mentions came from different people. Verified against the user's real example li
 4. Auto-created people (from salutation detection) start with `cashAdvance: 0` — user should be
    nudged to fill in the real advance amount; currently just relies on them tapping the person
    chip area manually.
-5. Scratchpad now strictly requires internet — worth double-checking the FAB/sheet UX makes it
-   obvious to a user in a low-signal supermarket that Structured mode is the offline-safe path.
+5. Scratchpad and receipt scanning both strictly require internet — worth double-checking the
+   UX makes it obvious to a user in a low-signal supermarket that Structured mode (manual add)
+   is the only offline-safe path.
 6. `appToast` and `updateToast` still share screen position — low-priority stacking issue.
 7. FAB vertical offset (`bottom: calc(6.5rem + safe-area)`) is a fixed estimate to clear the
    footer — if footer content wraps to more lines on a very narrow screen, worth re-checking
    for overlap on-device.
+8. Receipt matching sends the FULL item list (id+name) to Gemini every scan, regardless of
+   `inTrolley` status — fine at current list sizes, but worth revisiting (e.g. only send items
+   still missing a price) if lists grow large enough to affect prompt size/latency.
+9. No de-dupe guard if the same receipt is scanned twice — a second scan will just re-match and
+   overwrite prices again (harmless, just redundant) rather than warning "already scanned."
 
 ## Setup Reminder (unchanged)
 `GEMINI_API_KEY` must be set in Vercel → Settings → Environment Variables. No new env vars
-needed for this build.
+needed for this build — `/api/match-receipt.js` reuses the same key.
 
 ## Next Prompt Should Confirm
-- Ready for Phase 3 (Gemini Vision receipt scanning)?
-- Or another polish pass (cash-advance nudge for auto-created people, custom shared-split
-  ratios, toast stacking fix, FAB position tuning on-device)?
+- Ready for Phase 4 (tap-to-add popup for receipt "extras", custom shared-split ratios,
+  cash-advance nudge for auto-created people, toast stacking fix, FAB position tuning)?
+- Or first want to stress-test Phase 3 receipt scanning on-device (blurry photos, long
+  receipts, non-Latin fonts) before moving on?

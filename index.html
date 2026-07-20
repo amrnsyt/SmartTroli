@@ -268,7 +268,17 @@
               if (newWorker.state === 'installed' && navigator.serviceWorker.controller) showUpdateToast(newWorker);
             });
           });
+          // Check immediately on load, then on a timer — but a 60s timer alone misses the
+          // common mobile-PWA case where the app is backgrounded/suspended and the timer
+          // never fires. Re-checking on every foreground/resume closes that gap so the
+          // "New version available" toast reliably shows up the next time the app is opened,
+          // not only if it happens to stay open for 60+ seconds straight.
+          reg.update();
           setInterval(() => reg.update(), 60 * 1000);
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') reg.update();
+          });
+          window.addEventListener('pageshow', () => reg.update());
         }).catch(() => {});
         let refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {

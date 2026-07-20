@@ -67,6 +67,14 @@ platform 504 instead of (or in addition to) our own clean JSON timeout error. Fi
 enough to comfortably fit the existing timeout budget. Also bumped `health.js`'s
 `maxOutputTokens` from 5 → 32, since thinking tokens are counted against that budget even at
 low level and 5 was too tight (risk of silently truncated/empty replies).
+- **Phase 2.12 (THIS BUILD — bugfix, complete)**: Made the "New version available" update
+toast fire reliably instead of depending on the tab staying open 60+ seconds. Previously
+`index.html` only called `reg.update()` on a 60s `setInterval` — on mobile, PWAs get
+backgrounded/suspended, the timer stalls, and the popup could silently never appear until a
+manual full reload. Now `reg.update()` also fires immediately on registration, on
+`visibilitychange` (tab/app foregrounded again), and on `pageshow` (bfcache restores). No
+change to the underlying skipWaiting/waiting-worker flow — user still taps "Update Now" to
+apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable new version.
 - **Phase 3 (next — Gemini Vision)**: Photograph-a-receipt flow — `/api/match-receipt.js`.
 - **Phase 4 (polish)**: out-of-list item popup tagging, discount/rounding tied to receipt scans.
 
@@ -85,7 +93,10 @@ low level and 5 was too tight (risk of silently truncated/empty replies).
                           add button, #addSheet bottom-sheet modal (mode switch buttons +
                           structured form + Gemini-only scratchpad w/ skeleton loader,
                           connection dot, and persistent error banner), Person/Edit/Adjust/
-                          Settlement modals, generic Toast, update-toast
+                          Settlement modals, generic Toast, update-toast. Phase 2.12: SW
+                          update check (reg.update()) now also fires on visibilitychange +
+                          pageshow + immediately on register, not just a 60s interval — so the
+                          toast shows up reliably after a mobile PWA resumes from background.
 /app.js                -> State (items+people+adjustments), normalizeQty(), category grouping
                           in renderAll() w/ sticky headers, findOrCreatePerson(), settlement
                           engine, Edit modal, Adjustments modal, Gemini connection check,
@@ -101,8 +112,8 @@ low level and 5 was too tight (risk of silently truncated/empty replies).
                           parse-list.js. maxOutputTokens raised 5 -> 32 (thinking tokens eat
                           into this budget even at low level).
 /manifest.json         -> unchanged
-/sw.js                 -> CACHE_NAME bumped v9 -> v10 -> v11 (latest: app.js timeout values
-                          changed). Fetch handler excludes /api/* paths from caching entirely
+/sw.js                 -> CACHE_NAME bumped v11 -> v12 (Phase 2.12: index.html update-check
+                          patch). Fetch handler excludes /api/* paths from caching entirely
                           (always network-live, fixes stale health-check results).
 /vercel.json           -> NOW HAS a "functions" block setting maxDuration: 30s for
                           api/parse-list.js and 15s for api/health.js (previously only had

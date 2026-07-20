@@ -174,6 +174,8 @@ const el = {
   structuredForm: document.getElementById('structuredFormWrap'),
   scanReceiptBtn: document.getElementById('scanReceiptBtn'),
   receiptFileInput: document.getElementById('receiptFileInput'),
+  uploadReceiptBtn: document.getElementById('uploadReceiptBtn'),
+  receiptUploadInput: document.getElementById('receiptUploadInput'),
   receiptScanningOverlay: document.getElementById('receiptScanningOverlay'),
   receiptModal: document.getElementById('receiptModal'),
   receiptBody: document.getElementById('receiptBody'),
@@ -355,6 +357,19 @@ el.editSaveBtn.addEventListener('click', () => {
 
 const CATEGORY_ORDER = ['Sayur-sayuran', 'Buah-buahan', 'Daging & Ayam', 'Ikan & Makanan Laut', 'Tenusu', 'Perencah & Sos', 'Lain-lain'];
 
+// Fixed per-category accent colors (not cycled by render order) so a category keeps the same
+// color across renders — makes the categorized list visually varied instead of monotone green.
+const CATEGORY_COLORS = {
+  'Sayur-sayuran': '#34D399',      // emerald
+  'Buah-buahan': '#F5B942',        // amber
+  'Daging & Ayam': '#E8641F',      // orange
+  'Ikan & Makanan Laut': '#5EB4E8', // sky
+  'Tenusu': '#C084FC',             // violet
+  'Perencah & Sos': '#FB923C',     // tangerine
+  'Lain-lain': '#9FB0A6'           // neutral sub
+};
+function categoryColor(cat) { return CATEGORY_COLORS[cat] || '#9FB0A6'; }
+
 function sortedCategories(categories) {
   return categories.sort((a, b) => {
     const ia = CATEGORY_ORDER.indexOf(a), ib = CATEGORY_ORDER.indexOf(b);
@@ -385,9 +400,11 @@ function renderAll() {
       State.items.forEach(i => el.list.appendChild(renderItem(i)));
     } else {
       sortedCategories(categoryNames).forEach(cat => {
+        const color = categoryColor(cat);
         const header = document.createElement('li');
-        header.className = 'sticky top-0 z-10 bg-troli-bg/95 dark:bg-troli-bgdark/95 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider text-troli-green dark:text-troli-greenlight px-1 py-1.5 -mx-2 -mt-2';
-        header.textContent = cat;
+        header.className = 'sticky top-0 z-10 bg-troli-bg/95 dark:bg-troli-bgdark/95 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider px-1 py-1.5 -mx-2 -mt-2 flex items-center gap-1.5';
+        header.style.color = color;
+        header.innerHTML = `<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(cat)}`;
         el.list.appendChild(header);
         groups[cat].forEach(i => el.list.appendChild(renderItem(i)));
       });
@@ -522,10 +539,10 @@ function setAddMode(mode) {
   el.modeStructuredBtn.dataset.active = structured;
   el.modeScratchBtn.dataset.active = !structured;
   el.modeStructuredBtn.className = structured
-    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight bg-troli-green dark:bg-troli-greenlight text-white'
+    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight troli-btn-primary'
     : 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
   el.modeScratchBtn.className = !structured
-    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight bg-troli-green dark:bg-troli-greenlight text-white'
+    ? 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight troli-btn-primary'
     : 'flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
 }
 el.modeStructuredBtn.addEventListener('click', () => setAddMode('structured'));
@@ -721,11 +738,27 @@ el.scanReceiptBtn.addEventListener('click', () => {
   el.receiptFileInput.value = '';
   el.receiptFileInput.click();
 });
-
-el.receiptFileInput.addEventListener('change', async () => {
+el.receiptFileInput.addEventListener('change', () => {
   const file = el.receiptFileInput.files && el.receiptFileInput.files[0];
-  if (!file) return;
+  if (file) handleReceiptFile(file);
+});
 
+// Upload Photo — no `capture` attribute, so this opens the normal file/gallery picker
+// instead of forcing the live camera. Same handler, same endpoint, just a different source.
+el.uploadReceiptBtn.addEventListener('click', () => {
+  if (!navigator.onLine) {
+    toast('No internet connection — receipt scanning needs Gemini.', 'error');
+    return;
+  }
+  el.receiptUploadInput.value = '';
+  el.receiptUploadInput.click();
+});
+el.receiptUploadInput.addEventListener('change', () => {
+  const file = el.receiptUploadInput.files && el.receiptUploadInput.files[0];
+  if (file) handleReceiptFile(file);
+});
+
+async function handleReceiptFile(file) {
   el.receiptScanningOverlay.classList.remove('hidden');
   try {
     const dataUrl = await fileToBase64(file);
@@ -766,7 +799,7 @@ el.receiptFileInput.addEventListener('change', async () => {
   } finally {
     el.receiptScanningOverlay.classList.add('hidden');
   }
-});
+}
 
 function showReceiptResult(matches, extras) {
   const matchRows = matches.map(m => {

@@ -99,10 +99,33 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
   list. **Adding those "extra" receipt lines into the list is intentionally NOT done in this
   pass** — that's the popup-tagging flow already scoped for Phase 4 below, so it isn't
   duplicated here.
-- **Phase 4 (next — polish)**: turn Phase 3's "extras" (receipt lines that didn't match
-  anything) into a tap-to-add popup instead of read-only info; tie discount/rounding
-  adjustments to receipt scans; custom shared-split ratios; cash-advance nudge for
-  auto-created people; toast-stacking fix; FAB position tuning on-device.
+- **Phase 3.1 (THIS BUILD — complete)**:
+  1. **Receipt upload alongside camera capture.** The single "📸 Scan Receipt" button used a
+     file input with `capture="environment"`, which forces mobile browsers straight into the
+     live camera and skips the gallery/file picker entirely — there was no way to select an
+     existing photo. Split into two explicit entry points: "📸 Take Photo" (unchanged, still
+     `capture="environment"`) and "🖼️ Upload Photo" (new `#receiptUploadInput`, no `capture`
+     attribute, opens the normal file/gallery picker). Both share one `handleReceiptFile()`
+     function (refactored out of the old single change-handler) so there's no duplicated
+     scanning/matching logic. Header action row is now `overflow-x-auto` since it holds 5
+     buttons.
+  2. **Dark theme redesign — was flat, muddy, low-contrast ("gloomy").** Old dark palette was
+     near-black-olive-on-near-black (`bgdark #14170F`, `carddark #1E2317`, accent
+     `greenlight #4C7A3F`) with almost no color variation anywhere — category headers, buttons,
+     and text all leaned on the same muted forest green. Redesigned:
+     - New tokens: `bgdark #0E1512` (deeper, cooler), `carddark #182420` (more lift off bg),
+       `greenlight #34D399` (vivid emerald, was muddy `#4C7A3F`), `orange #E8641F` +
+       new `orangelight #FB923C`, new `amber #F5B942`, new `sky #5EB4E8`.
+     - Gradients added for visual depth: header logo badge, Trolley Rail progress fill,
+       floating "+" button, Trolley Total footer pill, and all primary buttons (new
+       `.troli-btn-primary` CSS utility, gradient `#2F5233 → #34D399`, replacing flat
+       `bg-troli-green dark:bg-troli-greenlight text-white` everywhere it appeared — that flat
+       combo had borderline white-on-bright-emerald contrast once the accent got brighter).
+     - **Category headers are now color-coded**, not uniform green: fixed color-per-category
+       map (`CATEGORY_COLORS` in `app.js`) — emerald/amber/orange/sky/violet/tangerine/neutral
+       — rendered as a colored dot + tinted label. Colors are assigned by category name (not
+       render order), so a category keeps the same color across every render.
+     - Dark-mode checkbox accent updated to match (`#34D399`, was `#7FA96B`).
 
 ## Stack
 - Vanilla HTML5, Tailwind CSS (CDN), Modular Vanilla JS
@@ -113,31 +136,42 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
 
 ## File Structure
 ```
-/index.html           -> App shell — COMPACT header (branding, Clear, progress rail, people
-                          chips, +Person/Adjust/Scan Receipt/Settle actions only), list as
-                          primary content (elevated card, sticky category headers, larger
-                          title), floating "+" add button, #addSheet bottom-sheet modal (mode
-                          switch buttons + structured form + Gemini-only scratchpad w/ skeleton
-                          loader, connection dot, persistent error banner, and — Phase 2.13 —
-                          an editable qty/unit review step (#scratchPreviewWrap) shown after a
-                          successful parse, before anything is committed), Person/Edit/Adjust/
-                          Settlement modals, generic Toast, update-toast. Phase 2.12: SW update
+/index.html           -> App shell — COMPACT header (branding w/ gradient logo badge, Clear,
+                          gradient progress rail, people chips, +Person/Adjust/Take Photo/
+                          Upload Photo/Settle actions — now overflow-x-auto, 5 buttons), list
+                          as primary content (elevated card w/ dark-mode border for definition,
+                          color-coded sticky category headers, larger title), gradient floating
+                          "+" add button, gradient Trolley Total pill, #addSheet bottom-sheet
+                          modal (mode switch buttons + structured form + Gemini-only scratchpad
+                          w/ skeleton loader, connection dot, persistent error banner, and —
+                          Phase 2.13 — an editable qty/unit review step (#scratchPreviewWrap)
+                          shown after a successful parse, before anything is committed),
+                          Person/Edit/Adjust/Settlement modals (all using new .troli-btn-primary
+                          gradient utility), generic Toast, update-toast. Phase 2.12: SW update
                           check (reg.update()) now also fires on visibilitychange + pageshow +
                           immediately on register, not just a 60s interval. Phase 3: hidden
                           camera-capable #receiptFileInput + #receiptScanningOverlay spinner +
                           #receiptModal summarizing auto-priced items and unmatched extras.
+                          Phase 3.1: NEW #receiptUploadInput (no `capture` attr — opens gallery/
+                          file picker) alongside the camera input; redesigned dark palette
+                          (richer bg/card tones, vivid emerald/amber/orange accents, gradients
+                          throughout) — see "Dark Theme Redesign" section below.
 /app.js                -> State (items+people+adjustments), normalizeQty(), category grouping
-                          in renderAll() w/ sticky headers, findOrCreatePerson(), settlement
-                          engine, Edit modal, Adjustments modal, Gemini connection check,
-                          toast(), swipe gestures, openAddSheet()/closeAddSheet()/setAddMode()
-                          for the bottom sheet, and a Gemini-only parseWithGemini() with
-                          reason-specific error handling (offline/timeout/api/network) — NO
+                          in renderAll() w/ sticky COLOR-CODED headers (Phase 3.1:
+                          CATEGORY_COLORS map + categoryColor()), findOrCreatePerson(),
+                          settlement engine, Edit modal, Adjustments modal, Gemini connection
+                          check, toast(), swipe gestures, openAddSheet()/closeAddSheet()/
+                          setAddMode() for the bottom sheet, and a Gemini-only parseWithGemini()
+                          with reason-specific error handling (offline/timeout/api/network) — NO
                           local fallback parser. Phase 2.13: renderScratchPreview()/
                           resetScratchPreview() + scratchConfirmBtn/scratchBackBtn handlers —
                           parse result now lands in an editable review list (pendingParsed)
                           instead of being committed to State immediately. Phase 3:
-                          fileToBase64(), scanReceiptBtn/receiptFileInput handlers calling
-                          /api/match-receipt, showReceiptResult() rendering the result modal.
+                          fileToBase64(), showReceiptResult() rendering the result modal.
+                          Phase 3.1: scan logic refactored into shared handleReceiptFile(),
+                          called by BOTH scanReceiptBtn (camera) and new uploadReceiptBtn
+                          (gallery/file picker) — no duplicated matching logic between the two
+                          entry points.
 /api/parse-list.js     -> Vercel serverless fn. Prompt unchanged. Model: gemini-3.5-flash.
                           Phase 2.11: generationConfig now sets thinkingConfig.thinkingLevel
                           = "low" — the real fix for the recurring 504s (thinking latency,
@@ -150,8 +184,8 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
                           [{itemId,price}], extras:[{name,price}]}. Same timeout-budget
                           convention and thinkingLevel: "low" as parse-list.js.
 /manifest.json         -> unchanged
-/sw.js                 -> CACHE_NAME bumped v11 -> v12 -> v13 (latest: Phase 2.13/3 index.html
-                          + app.js changes). Fetch handler excludes /api/* paths from caching
+/sw.js                 -> CACHE_NAME bumped ... -> v13 -> v14 (latest: Phase 3.1 index.html +
+                          app.js changes). Fetch handler excludes /api/* paths from caching
                           entirely (always network-live, fixes stale health-check results).
 /vercel.json           -> "functions" block: maxDuration 30s for api/parse-list.js, 15s for
                           api/health.js, 30s for the new api/match-receipt.js (Phase 3).
@@ -271,6 +305,47 @@ once there's another mention to merge with. Owner is promoted to `'shared'` when
 mentions came from different people. Verified against the user's real example list: `CARROT 🥕
 1` + `carrot` (under `Abah :`) → one `Carrot` entry, `qty: 2`, `owner: shared`.
 
+## Dark Theme Redesign (Phase 3.1)
+Complaint was the dark mode looked "gloomy" — accurate diagnosis: the old dark tokens
+(`bgdark #14170F`, `carddark #1E2317`, `greenlight #4C7A3F`) were all low-saturation
+near-black/near-olive with barely any hue separation from each other, so cards, header, and
+background all blurred together with no visual energy.
+- **New tokens**: `bgdark #0E1512`, `carddark #182420` (more lift off bg), `greenlight #34D399`
+  (vivid emerald), `orange #E8641F` + new `orangelight #FB923C`, new `amber #F5B942`, new
+  `sky #5EB4E8`. Light-mode `bg` also warmed slightly (`#F6F4EE` → `#FBF7EE`).
+- **Gradients** (all inline `style`, not Tailwind classes, since Tailwind CDN has no arbitrary
+  gradient utility support here): header logo badge, Trolley Rail fill, floating "+" FAB,
+  Trolley Total footer pill, and every primary button via the new `.troli-btn-primary` CSS
+  class (`linear-gradient(135deg, #2F5233, #34D399)`, white text) — this replaced the old flat
+  `bg-troli-green dark:bg-troli-greenlight text-white` pattern everywhere it appeared (Person/
+  Edit/Adjust Save buttons, "Add to List", Structured mode-toggle active state). The flat
+  version had gotten borderline-low-contrast once `greenlight` became a brighter, lighter
+  emerald — a solid emerald fill with white text reads worse than the gradient, which anchors
+  on the darker green.
+- **Category headers are color-coded**: `CATEGORY_COLORS` in `app.js` maps each of the 7
+  categories to a fixed hex (not cycled by render order, so a category keeps its color across
+  re-renders): Sayur-sayuran emerald, Buah-buahan amber, Daging & Ayam orange, Ikan & Makanan
+  Laut sky, Tenusu violet (`#C084FC`), Perencah & Sos tangerine, Lain-lain neutral gray. Each
+  header renders a colored dot + tinted label instead of uniform green text.
+- **List card container** got a subtle dark-mode border (`dark:border-troli-raildark/60`) and
+  higher opacity (`dark:bg-troli-carddark/80`, was `/40`) — the old version was nearly
+  invisible against the background, contributing to the "flat" feeling.
+- Dark-mode checkbox accent updated to match (`#34D399`).
+
+## Receipt Photo: Camera + Upload (Phase 3.1)
+Previously the single "📸 Scan Receipt" button used `<input type="file" capture="environment">`
+— the `capture` attribute forces mobile browsers to jump straight into the live camera, with no
+option to pick an existing photo from the gallery. Split into two buttons:
+- **"📸 Take Photo"** (`#scanReceiptBtn` / `#receiptFileInput`, unchanged) — still forces the
+  live camera via `capture="environment"`.
+- **"🖼️ Upload Photo"** (`#uploadReceiptBtn` / `#receiptUploadInput`, new) — plain
+  `<input type="file" accept="image/*">` with NO `capture` attribute, which opens the normal
+  OS file/gallery picker.
+Both call the same refactored `handleReceiptFile(file)` in `app.js` (previously inline in the
+single change-handler) — no duplicated scan/match/render logic between the two entry points.
+Header action row is now `overflow-x-auto` since it holds 5 buttons (+Person, Adjust, Take
+Photo, Upload Photo, Settle) — too many to comfortably fit one fixed-width row on narrow phones.
+
 ## Features Implemented (cumulative)
 - [x] Blank initial state, RM formatting, Trolley Rail progress, offline-first PWA shell
 - [x] People management, per-item owner + payment mode, sticky wallet widget
@@ -291,6 +366,8 @@ mentions came from different people. Verified against the user's real example li
 - [x] List-first layout: compact header, FAB + bottom-sheet for adding items
 - [x] Scratchpad review step — Gemini's extracted qty/unit editable before commit to the list
 - [x] Gemini Vision receipt scan — photo → matched prices auto-filled, unmatched extras shown
+- [x] Receipt scanning: separate Take Photo (camera) and Upload Photo (gallery/file) entry points
+- [x] Redesigned dark theme — vivid gradient accents, color-coded categories, no more flat/gloomy
 
 ## Known Gaps / Next Steps
 1. **Receipt "extras" are read-only (Phase 4 territory).** `/api/match-receipt.js` returns
@@ -322,6 +399,8 @@ mentions came from different people. Verified against the user's real example li
 needed for this build — `/api/match-receipt.js` reuses the same key.
 
 ## Next Prompt Should Confirm
+- Redesigned dark theme and receipt upload option are new — worth a quick on-device look before
+  going further, in case any gradient/contrast combo needs tuning for real screens.
 - Ready for Phase 4 (tap-to-add popup for receipt "extras", custom shared-split ratios,
   cash-advance nudge for auto-created people, toast stacking fix, FAB position tuning)?
 - Or first want to stress-test Phase 3 receipt scanning on-device (blurry photos, long

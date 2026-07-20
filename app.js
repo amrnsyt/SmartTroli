@@ -74,6 +74,10 @@ const State = {
     this.people.push({ id: uid(), name: name.trim(), isMe: false, cashAdvance: parseFloat(cashAdvance) || 0 });
     this.savePeople();
   },
+  updatePerson(id, patch) {
+    const p = this.people.find(x => x.id === id);
+    if (p) { Object.assign(p, patch); this.savePeople(); }
+  },
   removePerson(id) {
     if (id === 'me') return;
     this.people = this.people.filter(p => p.id !== id);
@@ -174,14 +178,18 @@ const el = {
   structuredForm: document.getElementById('structuredFormWrap'),
   scanReceiptBtn: document.getElementById('scanReceiptBtn'),
   receiptFileInput: document.getElementById('receiptFileInput'),
-  uploadReceiptBtn: document.getElementById('uploadReceiptBtn'),
   receiptUploadInput: document.getElementById('receiptUploadInput'),
+  receiptSourceSheet: document.getElementById('receiptSourceSheet'),
+  receiptSourceCameraBtn: document.getElementById('receiptSourceCameraBtn'),
+  receiptSourceGalleryBtn: document.getElementById('receiptSourceGalleryBtn'),
+  receiptSourceCancelBtn: document.getElementById('receiptSourceCancelBtn'),
   receiptScanningOverlay: document.getElementById('receiptScanningOverlay'),
   receiptModal: document.getElementById('receiptModal'),
   receiptBody: document.getElementById('receiptBody'),
   receiptCloseBtn: document.getElementById('receiptCloseBtn'),
   // modals
   personModal: document.getElementById('personModal'),
+  personModalTitle: document.getElementById('personModalTitle'),
   personName: document.getElementById('personName'),
   personCash: document.getElementById('personCash'),
   personSaveBtn: document.getElementById('personSaveBtn'),
@@ -248,12 +256,20 @@ function renderPeopleChips() {
   el.peopleChips.innerHTML = '';
   State.people.forEach(p => {
     const chip = document.createElement('div');
-    chip.className = 'flex items-center gap-1 bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full pl-3 pr-2 py-1 text-xs shrink-0';
-    chip.innerHTML = `<span class="font-medium">${escapeHtml(p.name)}</span>${!p.isMe ? `<span class="text-troli-sub dark:text-troli-subdark">· ${fmt(p.cashAdvance || 0)}</span>` : ''}`;
+    chip.className = 'flex items-center gap-1 bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full pl-1 pr-2 py-1 text-xs shrink-0';
+
+    const tapTarget = document.createElement('button');
+    tapTarget.type = 'button';
+    tapTarget.className = 'flex items-center gap-1 px-2 py-0.5 rounded-full active:scale-95 transition-transform';
+    tapTarget.innerHTML = `<span class="font-medium">${escapeHtml(p.name)}</span>${!p.isMe ? `<span class="text-troli-sub dark:text-troli-subdark">· ${fmt(p.cashAdvance || 0)}</span>` : ''}`;
+    if (!p.isMe) tapTarget.addEventListener('click', () => openPersonModal(p));
+    else tapTarget.disabled = true; // "Me" has no cash advance to edit here
+    chip.appendChild(tapTarget);
+
     if (!p.isMe) {
       const x = document.createElement('button');
       x.textContent = '✕';
-      x.className = 'ml-1 text-troli-sub dark:text-troli-subdark';
+      x.className = 'ml-1 text-troli-sub dark:text-troli-subdark shrink-0';
       x.addEventListener('click', () => { State.removePerson(p.id); renderAll(); });
       chip.appendChild(x);
     }
@@ -491,16 +507,33 @@ async function checkGeminiConnection(silent = false) {
 }
 el.geminiCheckBtn.addEventListener('click', () => checkGeminiConnection(false));
 
-// ---------- People modal ----------
-el.addPersonBtn.addEventListener('click', () => {
-  el.personName.value = ''; el.personCash.value = '';
+// ---------- People modal (add + edit — Phase 2.15) ----------
+// editingPersonId tracks whether the modal is creating a new person (null) or editing an
+// existing one's name/cashAdvance (their id) — previously there was no edit path at all, so a
+// mistyped or later-updated cash advance (e.g. an auto-created "Abah" from the scratchpad,
+// which always starts at RM 0.00) could never be corrected without deleting and re-adding them.
+let editingPersonId = null;
+
+function openPersonModal(person) {
+  editingPersonId = person ? person.id : null;
+  el.personModalTitle.textContent = person ? 'Edit Family Member' : 'Add Family Member';
+  el.personName.value = person ? person.name : '';
+  el.personCash.value = person ? (person.cashAdvance || 0) : '';
+  el.personSaveBtn.textContent = person ? 'Save Changes' : 'Save';
   el.personModal.classList.remove('hidden');
-});
-el.personCancelBtn.addEventListener('click', () => el.personModal.classList.add('hidden'));
+}
+
+el.addPersonBtn.addEventListener('click', () => openPersonModal(null));
+el.personCancelBtn.addEventListener('click', () => { editingPersonId = null; el.personModal.classList.add('hidden'); });
 el.personSaveBtn.addEventListener('click', () => {
   const name = el.personName.value.trim();
   if (!name) return;
-  State.addPerson(name, el.personCash.value);
+  if (editingPersonId) {
+    State.updatePerson(editingPersonId, { name, cashAdvance: parseFloat(el.personCash.value) || 0 });
+  } else {
+    State.addPerson(name, el.personCash.value);
+  }
+  editingPersonId = null;
   el.personModal.classList.add('hidden');
   renderAll();
 });
@@ -721,37 +754,68 @@ el.scratchConfirmBtn.addEventListener('click', () => {
 // Photographs a receipt, matches each printed line item to an existing list item by name,
 // and auto-fills its price. Line items on the receipt that don't match anything in the list
 // are reported for the user's awareness only — adding them as new items is Phase 4.
-function fileToBase64(file) {
+
+// Phase 2.15: a raw phone-camera photo (often 3-8MB as JPEG) blows straight through Vercel
+// Serverless Functions' hard 4.5MB request-body limit — that's what the "Gemini API error
+// (413)" was, not anything Gemini-side. Downscaling + re-encoding client-side on a canvas
+// keeps the actual upload well under that limit while staying plenty readable for OCR/matching
+// (receipts are text-heavy, not detail-heavy — 1600px on the long edge is more than enough).
+function compressImageForUpload(file, maxDim = 1600, startQuality = 0.72) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result); // data: URL — server strips the prefix
-    reader.onerror = () => reject(new Error('Could not read the photo file.'));
-    reader.readAsDataURL(file);
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width >= height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+        else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+
+      // Keep the final base64 comfortably under Vercel's 4.5MB body limit (leaving headroom
+      // for the item list + JSON overhead), stepping quality down further if still too big.
+      const maxBase64Bytes = 3.2 * 1024 * 1024;
+      let quality = startQuality;
+      let dataUrl = canvas.toDataURL('image/jpeg', quality);
+      while (dataUrl.length > maxBase64Bytes && quality > 0.35) {
+        quality -= 0.12;
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+      }
+      resolve(dataUrl);
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Could not read the photo file.')); };
+    img.src = objectUrl;
   });
 }
 
+// Single "📸 Receipt" button opens a small action sheet so the header doesn't need two
+// separate always-visible buttons for camera vs gallery — that's what was making the action
+// row look cluttered.
 el.scanReceiptBtn.addEventListener('click', () => {
   if (!navigator.onLine) {
     toast('No internet connection — receipt scanning needs Gemini.', 'error');
     return;
   }
+  el.receiptSourceSheet.classList.remove('hidden');
+});
+el.receiptSourceCancelBtn.addEventListener('click', () => el.receiptSourceSheet.classList.add('hidden'));
+el.receiptSourceCameraBtn.addEventListener('click', () => {
+  el.receiptSourceSheet.classList.add('hidden');
   el.receiptFileInput.value = '';
   el.receiptFileInput.click();
+});
+el.receiptSourceGalleryBtn.addEventListener('click', () => {
+  el.receiptSourceSheet.classList.add('hidden');
+  el.receiptUploadInput.value = '';
+  el.receiptUploadInput.click();
 });
 el.receiptFileInput.addEventListener('change', () => {
   const file = el.receiptFileInput.files && el.receiptFileInput.files[0];
   if (file) handleReceiptFile(file);
-});
-
-// Upload Photo — no `capture` attribute, so this opens the normal file/gallery picker
-// instead of forcing the live camera. Same handler, same endpoint, just a different source.
-el.uploadReceiptBtn.addEventListener('click', () => {
-  if (!navigator.onLine) {
-    toast('No internet connection — receipt scanning needs Gemini.', 'error');
-    return;
-  }
-  el.receiptUploadInput.value = '';
-  el.receiptUploadInput.click();
 });
 el.receiptUploadInput.addEventListener('change', () => {
   const file = el.receiptUploadInput.files && el.receiptUploadInput.files[0];
@@ -761,7 +825,7 @@ el.receiptUploadInput.addEventListener('change', () => {
 async function handleReceiptFile(file) {
   el.receiptScanningOverlay.classList.remove('hidden');
   try {
-    const dataUrl = await fileToBase64(file);
+    const dataUrl = await compressImageForUpload(file);
     const items = State.items.map(i => ({ id: i.id, name: i.name }));
 
     const controller = new AbortController();
@@ -771,7 +835,9 @@ async function handleReceiptFile(file) {
       res = await fetch('/api/match-receipt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl, mimeType: file.type || 'image/jpeg', items }),
+        // Always JPEG here — the canvas re-encode above normalizes the format regardless of
+        // what the original photo/file was.
+        body: JSON.stringify({ image: dataUrl, mimeType: 'image/jpeg', items }),
         signal: controller.signal
       });
     } finally {
@@ -779,8 +845,11 @@ async function handleReceiptFile(file) {
     }
 
     if (!res.ok) {
+      if (res.status === 413) {
+        throw new Error('That photo is still too large to upload even after compression. Try a tighter crop of just the receipt.');
+      }
       let detail = '';
-      try { detail = (await res.json()).error || ''; } catch (e) { /* ignore */ }
+      try { detail = (await res.json()).error || ''; } catch (e) { /* ignore — Vercel's own error pages aren't JSON */ }
       throw new Error(detail ? `Gemini API error: ${detail}` : `Gemini API error (${res.status}).`);
     }
 

@@ -144,6 +144,45 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
   set `thinkingConfig`). `api/health.js` untouched — it never parses Gemini's answer as JSON.
   No change to `thinkingLevel: "low"` itself — reverting that would bring back the Phase 2.11
   504s, so this is a parse-robustness fix layered on top rather than a tradeoff reversal.
+- **Phase 2.15 (THIS BUILD — 3 bugfixes, complete)**:
+  1. **Fixed "Gemini API error (413)" on receipt upload.** Root cause was NOT Gemini — it was
+     Vercel Serverless Functions' hard 4.5MB request-body limit. A raw phone-camera photo
+     (often 3-8MB as JPEG once base64-encoded) blew straight through that before Gemini was
+     ever called. Fixed client-side: new `compressImageForUpload()` in `app.js` draws the
+     photo onto a canvas, downscales to a 1600px long edge, and re-encodes as JPEG, stepping
+     quality down further if the result is still over ~3.2MB base64 (comfortable headroom
+     under the 4.5MB limit for the item-list JSON alongside it). Receipts are text-heavy, not
+     detail-heavy, so 1600px is plenty for matching/OCR. `handleReceiptFile()` now calls this
+     instead of a bare `FileReader.readAsDataURL()`, and always sends `mimeType: 'image/jpeg'`
+     since the canvas re-encode normalizes the format regardless of the original file type.
+     Also added a specific, friendlier message if a 413 somehow still occurs (Vercel's 413
+     response isn't JSON, so the old code's generic fallback message was all a user ever saw).
+  2. **Redesigned the cluttered header action row.** It was 5 differently-sized buttons
+     (`+Person`/`Adjust`/`Take Photo`/`Upload Photo`/`Arahan Malas`) crammed into one
+     `overflow-x-auto` row, clipping at the edges on real screens. Replaced with: a
+     `grid-cols-3` row for the 3 secondary utility actions (`+Person`, `Adjust`, `Receipt` —
+     no horizontal scroll, no clipping), and `Arahan Malas` promoted to its own full-width
+     gradient button below (it's the primary CTA — the settlement flow — so it now reads as
+     one, instead of competing visually with small utility buttons). The two receipt entry
+     points (camera vs gallery) are no longer separate always-visible header buttons — tapping
+     the single "📸 Receipt" button now opens a small `#receiptSourceSheet` action sheet with
+     "📷 Take Photo" / "🖼️ Upload from Gallery", same underlying `handleReceiptFile()` either
+     way. `uploadReceiptBtn` element removed; `receiptFileInput`/`receiptUploadInput` (the
+     actual hidden file inputs) unchanged.
+  3. **Person cash advance was never editable after creation — the real bug behind "cannot
+     add/edit amount for the shared person."** (Screenshot showed "Abah · RM 0.00" — Abah was
+     auto-created from a scratchpad salutation, per the already-known gap that these start at
+     RM 0.00, but there was genuinely no way to correct it afterward: person chips only
+     rendered a static `RM 0.00` label plus a ✕ delete button — no edit path existed at all,
+     for ANY person, not just auto-created or "shared" ones.) Fixed: new
+     `State.updatePerson(id, patch)`; `personModal` (previously add-only) now supports an edit
+     mode via `openPersonModal(person)` — title/button text switch between "Add"/"Edit Family
+     Member" and "Save"/"Save Changes"; tapping a person's chip (anywhere except the ✕) now
+     opens it pre-filled with their current name + cash advance. The true "Shared (Kongsi)"
+     bucket itself still has no chip/cash-advance concept, by design — it's not a person, it's
+     an item-owner tag meaning "split across everyone," so there's nothing to edit there; if
+     the next report of this is specifically about the Shared bucket rather than a real family
+     member, flag it and it'll need a different fix (see Known Gaps #1 below).
 
 ## Stack
 - Vanilla HTML5, Tailwind CSS (CDN), Modular Vanilla JS
@@ -155,25 +194,32 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
 ## File Structure
 ```
 /index.html           -> App shell — COMPACT header (branding w/ gradient logo badge, Clear,
-                          gradient progress rail, people chips, +Person/Adjust/Take Photo/
-                          Upload Photo/Settle actions — now overflow-x-auto, 5 buttons), list
-                          as primary content (elevated card w/ dark-mode border for definition,
-                          color-coded sticky category headers, larger title), gradient floating
-                          "+" add button, gradient Trolley Total pill, #addSheet bottom-sheet
-                          modal (mode switch buttons + structured form + Gemini-only scratchpad
-                          w/ skeleton loader, connection dot, persistent error banner, and —
-                          Phase 2.13 — an editable qty/unit review step (#scratchPreviewWrap)
-                          shown after a successful parse, before anything is committed),
-                          Person/Edit/Adjust/Settlement modals (all using new .troli-btn-primary
-                          gradient utility), generic Toast, update-toast. Phase 2.12: SW update
-                          check (reg.update()) now also fires on visibilitychange + pageshow +
-                          immediately on register, not just a 60s interval. Phase 3: hidden
-                          camera-capable #receiptFileInput + #receiptScanningOverlay spinner +
-                          #receiptModal summarizing auto-priced items and unmatched extras.
-                          Phase 3.1: NEW #receiptUploadInput (no `capture` attr — opens gallery/
-                          file picker) alongside the camera input; redesigned dark palette
-                          (richer bg/card tones, vivid emerald/amber/orange accents, gradients
-                          throughout) — see "Dark Theme Redesign" section below.
+                          gradient progress rail, people chips — Phase 2.15: now tappable to
+                          edit a person's name/cash advance, not just a ✕ delete). Phase 2.15
+                          ALSO redesigned the action row: grid-cols-3 (+Person/Adjust/Receipt,
+                          no more horizontal-scroll clipping) + a promoted full-width gradient
+                          Settle button below, replacing the old 5-button overflow-x-auto row.
+                          List as primary content (elevated card w/ dark-mode border for
+                          definition, color-coded sticky category headers, larger title),
+                          gradient floating "+" add button, gradient Trolley Total pill,
+                          #addSheet bottom-sheet modal (mode switch buttons + structured form +
+                          Gemini-only scratchpad w/ skeleton loader, connection dot, persistent
+                          error banner, and — Phase 2.13 — an editable qty/unit review step
+                          (#scratchPreviewWrap) shown after a successful parse, before anything
+                          is committed), Person/Edit/Adjust/Settlement modals (all using
+                          .troli-btn-primary gradient utility; personModal is Phase 2.15
+                          add/edit dual-mode, title id="personModalTitle"), generic Toast,
+                          update-toast. Phase 2.12: SW update check (reg.update()) also fires
+                          on visibilitychange + pageshow + immediately on register, not just a
+                          60s interval. Phase 3: #receiptScanningOverlay spinner + #receiptModal
+                          summarizing auto-priced items and unmatched extras. Phase 2.15: the
+                          camera (#receiptFileInput) and gallery (#receiptUploadInput) file
+                          inputs are now BOTH hidden and triggered via a new
+                          #receiptSourceSheet action sheet (📷 Take Photo / 🖼️ Upload from
+                          Gallery) opened by the single "📸 Receipt" button — replaces Phase
+                          3.1's two separate always-visible header buttons. Redesigned dark
+                          palette (richer bg/card tones, vivid emerald/amber/orange accents,
+                          gradients throughout) — see "Dark Theme Redesign" section below.
 /app.js                -> State (items+people+adjustments), normalizeQty(), category grouping
                           in renderAll() w/ sticky COLOR-CODED headers (Phase 3.1:
                           CATEGORY_COLORS map + categoryColor()), findOrCreatePerson(),
@@ -185,11 +231,19 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
                           resetScratchPreview() + scratchConfirmBtn/scratchBackBtn handlers —
                           parse result now lands in an editable review list (pendingParsed)
                           instead of being committed to State immediately. Phase 3:
-                          fileToBase64(), showReceiptResult() rendering the result modal.
-                          Phase 3.1: scan logic refactored into shared handleReceiptFile(),
-                          called by BOTH scanReceiptBtn (camera) and new uploadReceiptBtn
-                          (gallery/file picker) — no duplicated matching logic between the two
-                          entry points.
+                          showReceiptResult() rendering the result modal. Phase 3.1: scan logic
+                          in shared handleReceiptFile(). Phase 2.15 changes:
+                          (1) State.updatePerson(id, patch) added; personModal reused for both
+                          add + edit via openPersonModal(person) + editingPersonId, wired to
+                          renderPeopleChips()'s now-tappable chips (✕ still deletes separately);
+                          (2) compressImageForUpload() — canvas downscale-to-1600px + JPEG
+                          re-encode with quality step-down, keeps uploads under Vercel's 4.5MB
+                          function body limit (root cause of the "413" error) — used by
+                          handleReceiptFile() in place of the old bare FileReader read;
+                          (3) receipt entry rewired to open #receiptSourceSheet (camera/gallery
+                          choice) instead of two separate buttons — uploadReceiptBtn el ref
+                          removed, receiptSourceCameraBtn/receiptSourceGalleryBtn/
+                          receiptSourceCancelBtn added.
 /api/parse-list.js     -> Vercel serverless fn. Prompt unchanged. Model: gemini-3.5-flash.
                           Phase 2.11: generationConfig now sets thinkingConfig.thinkingLevel
                           = "low" (fixed the 504s). Phase 2.14: JSON.parse(raw) replaced with
@@ -203,14 +257,17 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
                           receipt photo + the user's {id,name} item list, returns {matches:
                           [{itemId,price}], extras:[{name,price}]}. Same timeout-budget
                           convention and thinkingLevel: "low" as parse-list.js. Phase 2.14:
-                          also uses _lib.js's safeJsonParse(raw) for the same leak reason.
+                          also uses _lib.js's safeJsonParse(raw) for the same leak reason. Not
+                          touched in Phase 2.15 — the 413 fix lives entirely client-side in
+                          app.js (compressImageForUpload), since Vercel rejects an oversized
+                          body before this function's code ever runs.
 /api/_lib.js           -> NEW (Phase 2.14). Underscore-prefixed so Vercel does NOT expose it as
                           a route, but parse-list.js/match-receipt.js require() it fine.
                           Exports safeJsonParse(raw): plain JSON.parse -> strip markdown fence
                           -> locate first [ or { to its matching last ] or } and parse that
                           slice. Add any future Gemini-calling endpoint's parsing here too.
 /manifest.json         -> unchanged
-/sw.js                 -> CACHE_NAME bumped ... -> v13 -> v14 (latest: Phase 3.1 index.html +
+/sw.js                 -> CACHE_NAME bumped ... -> v14 -> v15 (latest: Phase 2.15 index.html +
                           app.js changes). Fetch handler excludes /api/* paths from caching
                           entirely (always network-live, fixes stale health-check results).
 /vercel.json           -> "functions" block: maxDuration 30s for api/parse-list.js, 15s for
@@ -394,6 +451,9 @@ Photo, Upload Photo, Settle) — too many to comfortably fit one fixed-width row
 - [x] Gemini Vision receipt scan — photo → matched prices auto-filled, unmatched extras shown
 - [x] Receipt scanning: separate Take Photo (camera) and Upload Photo (gallery/file) entry points
 - [x] Redesigned dark theme — vivid gradient accents, color-coded categories, no more flat/gloomy
+- [x] Editable person cash advance (tap a chip) — previously add/delete only
+- [x] Client-side receipt image compression — fixes the Vercel 4.5MB body-limit 413 error
+- [x] Consolidated header action row (3-button grid + full-width Settle CTA + receipt action sheet)
 
 ## Known Gaps / Next Steps
 1. **safeJsonParse (Phase 2.14) is a mitigation, not a guarantee.** It handles leaked
@@ -410,9 +470,10 @@ Photo, Upload Photo, Settle) — too many to comfortably fit one fixed-width row
    alias (auto-points to current GA flash model) in a future pass so this class of bug can't
    recur silently.
 4. Shared-item cost still splits evenly across all people (including "Me") — no custom ratio.
-5. Auto-created people (from salutation detection) start with `cashAdvance: 0` — user should be
-   nudged to fill in the real advance amount; currently just relies on them tapping the person
-   chip area manually.
+5. Auto-created people (from salutation detection) still start with `cashAdvance: 0` — Phase
+   2.15 made this editable (tap their chip), but there's still no proactive nudge/prompt right
+   after auto-creation telling the user "hey, set Abah's actual cash advance now" — they have
+   to know to tap the chip.
 6. Scratchpad and receipt scanning both strictly require internet — worth double-checking the
    UX makes it obvious to a user in a low-signal supermarket that Structured mode (manual add)
    is the only offline-safe path.
@@ -431,9 +492,11 @@ Photo, Upload Photo, Settle) — too many to comfortably fit one fixed-width row
 needed for this build — `/api/match-receipt.js` reuses the same key.
 
 ## Next Prompt Should Confirm
-- Redesigned dark theme and receipt upload option are new — worth a quick on-device look before
-  going further, in case any gradient/contrast combo needs tuning for real screens.
+- Confirm the 413 is actually gone on a real device with a real camera photo — compression is
+  tested logically but not verified against an actual phone photo end-to-end yet.
+- Confirm the redesigned header (3-button grid + full-width Settle) reads as less cluttered on
+  a real screen, and that tapping a person chip to edit their cash advance feels discoverable
+  (no visual affordance was added beyond `active:scale-95` — worth watching for confusion).
 - Ready for Phase 4 (tap-to-add popup for receipt "extras", custom shared-split ratios,
-  cash-advance nudge for auto-created people, toast stacking fix, FAB position tuning)?
-- Or first want to stress-test Phase 3 receipt scanning on-device (blurry photos, long
-  receipts, non-Latin fonts) before moving on?
+  proactive cash-advance nudge for auto-created people, toast stacking fix, FAB position
+  tuning)?

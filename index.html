@@ -69,15 +69,18 @@
 
     <!-- People chips -->
     <div class="mt-3 flex items-center gap-2 overflow-x-auto pb-1" id="peopleChips"></div>
-    <div class="mt-2 flex items-center gap-2 overflow-x-auto pb-1">
-      <button id="addPersonBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">+ Person</button>
-      <button id="adjustBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">⚙️ Adjust</button>
-      <button id="scanReceiptBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">📸 Take Photo</button>
-      <button id="uploadReceiptBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">🖼️ Upload Photo</button>
+
+    <!-- Secondary actions — even 3-across grid, no horizontal scroll/clipping -->
+    <div class="mt-2 grid grid-cols-3 gap-2">
+      <button id="addPersonBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-2 py-2 active:scale-95 transition-transform truncate">+ Person</button>
+      <button id="adjustBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-2 py-2 active:scale-95 transition-transform truncate">⚙️ Adjust</button>
+      <button id="scanReceiptBtn" type="button" class="text-[11px] uppercase tracking-wider bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full px-2 py-2 active:scale-95 transition-transform truncate">📸 Receipt</button>
       <input id="receiptFileInput" type="file" accept="image/*" capture="environment" class="hidden" />
       <input id="receiptUploadInput" type="file" accept="image/*" class="hidden" />
-      <button id="settleBtn" type="button" class="text-[11px] uppercase tracking-wider text-white rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0" style="background: linear-gradient(135deg, #2F5233, #34D399);">Arahan Malas 🧮</button>
     </div>
+
+    <!-- Primary action — full-width, deserves more visual weight than the utility buttons above -->
+    <button id="settleBtn" type="button" class="mt-2 w-full text-sm font-semibold uppercase tracking-wider text-white rounded-full px-4 py-2.5 active:scale-95 transition-transform" style="background: linear-gradient(135deg, #2F5233, #34D399);">Arahan Malas 🧮</button>
   </header>
 
   <!-- SCROLLABLE CENTER — the list is the app's primary surface -->
@@ -205,7 +208,7 @@
   <!-- Person Modal -->
   <div id="personModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
     <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
-      <h3 class="font-display text-lg mb-3">Add Family Member</h3>
+      <h3 id="personModalTitle" class="font-display text-lg mb-3">Add Family Member</h3>
       <input id="personName" type="text" placeholder="Name (e.g. Abah)" class="w-full mb-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
       <input id="personCash" type="number" step="0.01" min="0" placeholder="Cash advance given (RM)" class="w-full mb-4 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
       <div class="flex gap-2">
@@ -222,6 +225,19 @@
       <p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-4">One clear instruction per person — no spreadsheets.</p>
       <div id="settleBody"></div>
       <button id="settleCloseBtn" type="button" class="w-full mt-4 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Close</button>
+    </div>
+  </div>
+
+  <!-- Receipt Source Sheet — one "📸 Receipt" button now opens this instead of two separate
+       header buttons, which is what was making the action row look cluttered. -->
+  <div id="receiptSourceSheet" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
+      <h3 class="font-display text-lg mb-3">Scan Receipt</h3>
+      <div class="space-y-2">
+        <button id="receiptSourceCameraBtn" type="button" class="w-full flex items-center gap-3 text-sm rounded-xl px-4 py-3 border border-troli-rail dark:border-troli-raildark active:scale-95 transition-transform"><span>📷</span><span>Take Photo</span></button>
+        <button id="receiptSourceGalleryBtn" type="button" class="w-full flex items-center gap-3 text-sm rounded-xl px-4 py-3 border border-troli-rail dark:border-troli-raildark active:scale-95 transition-transform"><span>🖼️</span><span>Upload from Gallery</span></button>
+      </div>
+      <button id="receiptSourceCancelBtn" type="button" class="w-full mt-3 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
     </div>
   </div>
 

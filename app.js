@@ -753,7 +753,7 @@ el.scratchConfirmBtn.addEventListener('click', () => {
 // ---------- Phase 3 — Gemini Vision receipt scan ----------
 // Photographs a receipt, matches each printed line item to an existing list item by name,
 // and auto-fills its price. Line items on the receipt that don't match anything in the list
-// are reported for the user's awareness only — adding them as new items is Phase 4.
+// are shown in a "not in your list" section — Phase 4 makes those tappable to add directly.
 
 // Phase 2.15: a raw phone-camera photo (often 3-8MB as JPEG) blows straight through Vercel
 // Serverless Functions' hard 4.5MB request-body limit — that's what the "Gemini API error
@@ -870,6 +870,10 @@ async function handleReceiptFile(file) {
   }
 }
 
+// Phase 4: "extras" (receipt line items that didn't match anything already in the list) are
+// now individually tappable — "+ Add" drops that item straight into State at the scanned
+// price instead of just being informational. Matched items stay read-only rows since their
+// price was already applied to the existing item the moment the scan came back.
 function showReceiptResult(matches, extras) {
   const matchRows = matches.map(m => {
     const item = State.items.find(i => i.id === m.itemId);
@@ -877,23 +881,47 @@ function showReceiptResult(matches, extras) {
     return `<li class="text-sm bg-troli-bg dark:bg-troli-bgdark rounded-xl px-3 py-2 flex items-center justify-between"><span>${escapeHtml(label)}</span><span class="font-semibold">${fmt(m.price)}</span></li>`;
   }).join('');
 
-  const extraRows = extras.map(e =>
-    `<li class="text-sm bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2 flex items-center justify-between"><span>${escapeHtml(e.name)}</span><span class="font-semibold">${fmt(e.price)}</span></li>`
-  ).join('');
-
   let bodyHtml = '';
   if (matches.length) {
     bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">Prices updated (${matches.length})</p><ul class="space-y-1.5 mb-3">${matchRows}</ul>`;
   }
   if (extras.length) {
-    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">On receipt but not in your list (${extras.length})</p><ul class="space-y-1.5">${extraRows}</ul>`;
+    bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">On receipt but not in your list (${extras.length})</p><ul id="receiptExtrasList" class="space-y-1.5"></ul>`;
   }
   if (!matches.length && !extras.length) {
     bodyHtml = `<p class="text-sm text-troli-sub dark:text-troli-subdark">Gemini couldn't read any line items off that photo — try a clearer, well-lit shot.</p>`;
   }
 
   el.receiptBody.innerHTML = bodyHtml;
-  el.receiptModal.classList.remove('hidden');
+
+  if (extras.length) {
+    const extrasList = document.getElementById('receiptExtrasList');
+    extras.forEach((e) => {
+      const li = document.createElement('li');
+      li.className = 'text-sm bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2 flex items-center justify-between gap-2';
+      li.innerHTML = `
+        <div class="min-w-0 flex-1">
+          <p class="truncate">${escapeHtml(e.name)}</p>
+          <p class="text-[11px] text-troli-sub dark:text-troli-subdark">${fmt(e.price)}</p>
+        </div>
+        <button type="button" class="addExtraBtn shrink-0 text-xs font-semibold text-white bg-troli-orange rounded-full px-3 py-1.5 active:scale-95 transition-transform">+ Add</button>
+      `;
+      li.querySelector('.addExtraBtn').addEventListener('click', () => {
+        // New-from-receipt items land on "Me" / cash by default, qty left unset (Price is
+        // known from the receipt but a countable qty isn't) — same as any item that starts
+        // life with "Price TBD" flipped around: here price is known, qty is TBD instead.
+        State.addItem(e.name, e.price, 'me', 'cash', null, '', '');
+        renderAll();
+        const btn = li.querySelector('.addExtraBtn');
+        const addedTag = document.createElement('span');
+        addedTag.className = 'shrink-0 text-[11px] text-troli-green dark:text-troli-greenlight font-semibold';
+        addedTag.textContent = 'Added ✓';
+        btn.replaceWith(addedTag);
+        toast(`${e.name} added to list`, 'success');
+      });
+      extrasList.appendChild(li);
+    });
+  }
 }
 el.receiptCloseBtn.addEventListener('click', () => el.receiptModal.classList.add('hidden'));
 

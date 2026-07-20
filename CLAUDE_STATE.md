@@ -9,45 +9,41 @@ grocery list itself is the app's primary screen; adding items is a secondary act
 a floating button.
 
 ## Phase Roadmap
-- **Phase 1 (complete)**: People/ownership tags, cash-advance wallet, payment-mode tracking,
-local settlement engine, swipe gestures, offline-first PWA shell.
-- **Phase 2 (complete)**: Gemini 1.5 Flash scratchpad parsing via `/api/parse-list.js`.
-- **Phase 2.5–2.7 (complete)**: Qty-first data model, health check, Edit/Toast components,
-salutation/owner auto-detection, category grouping, cross-owner duplicate merging.
-- **Phase 2.8 (complete)**: Gemini-only scratchpad (no offline fallback), list-first layout
-rework (FAB + `#addSheet` bottom sheet).
-- **Phase 2.9 (complete)**: Fixed model 404 — `gemini-1.5-flash` → `gemini-3.5-flash` in
-`parse-list.js` and `health.js`. SW excludes `/api/*` from caching.
-- **Phase 2.10 (complete)**: Fixed Vercel default-timeout 504s via `functions.maxDuration` in
-`vercel.json` + nested `AbortController` timeouts across server/client.
-- **Phase 3 (IN PROGRESS — this build)**: Gemini Vision receipt scanning.
-  1. **`/api/match-receipt.js` — DONE (this build).** New serverless fn. Sends the receipt
-photo + the shopper's current item names to `gemini-3.5-flash` vision, gets back
-`{"items":[{"name","price"}]}`, fuzzy-matches each against the current list
-(normalize → exact → substring), and returns `{ matched: [{listName, receiptName, price}],
-unmatched: [{name, price}] }`. Same reason-tagged error contract as `parse-list.js`
-(`config`/`input`/`api`/`parse`/`timeout`/`network`) so the client can reuse the existing
-error-banner pattern. 22s in-file `AbortController`, matches the `maxDuration: 30` Vercel
-already had reserved for this file in `vercel.json` (no change needed there — it was
-pre-provisioned ahead of this build).
-  2. **`app.js` client wiring — NOT YET DONE.** `index.html` already has all the receipt UI
-markup shipped (`scanReceiptBtn`, `receiptSourceSheet` w/ camera+gallery buttons,
-`receiptFileInput`/`receiptUploadInput`, `receiptScanningOverlay`, `receiptModal` w/
-`receiptBody`+`receiptCloseBtn`), but none of it has listeners yet — tapping 📸 Receipt
-currently does nothing. Blocked on getting the current `app.js` (and `sw.js`) source: GitHub's
-raw/blob routes for those two specific files have been refusing this assistant's fetch tool
-across two sessions now (index.html, vercel.json, and CLAUDE_STATE.md all fetched fine). Needs
-the user to paste `app.js` + `sw.js` content directly so the wiring can be added without
-guessing at existing internal function/variable names (State shape, save/render fn names,
-toast fn) and risking a broken overwrite with no local debugger to catch it.
-  3. **Planned client flow once unblocked**: tap Receipt → source sheet → pick file → convert
-to base64 → show `receiptScanningOverlay` → POST `{image, mimeType, itemNames}` to
-`/api/match-receipt.js` (12–25s client timeout, mirroring the scratchpad's nested-timeout
-pattern) → hide overlay → render `receiptModal`: matched items as old→new price rows
-(checked by default, applies on confirm), unmatched items as optional "+ Add to list" rows →
-on confirm, write prices into `State.items`, re-render, toast the count updated.
-- **Phase 4 (polish, not started)**: out-of-list item popup tagging, discount/rounding tied to
-receipt scans.
+- **Phase 1–2.10 (complete)**: see prior builds — settlement engine, Gemini-only scratchpad,
+list-first layout, `gemini-3.5-flash` model fix, `vercel.json` maxDuration nesting.
+- **Phase 2.15 (complete, discovered this build)**: client-side receipt image compression
+(`compressImageForUpload()` in `app.js`) added ahead of Phase 3 to dodge Vercel's 4.5MB
+serverless request-body limit — canvas downscale to 1600px long edge + JPEG quality stepping
+down to keep base64 under ~3.2MB.
+- **Phase 3 (COMPLETE — this build)**: Gemini Vision receipt scanning.
+  - `app.js` already had the *entire* client-side flow built (source sheet → camera/gallery →
+compress → scanning overlay → POST `/api/match-receipt` → result modal → price-apply via
+`State.updateItem()`) — this was done in an earlier session not reflected in the previous
+version of this file.
+  - **Bug fixed this build**: `/api/match-receipt.js` (written last session) didn't match what
+`app.js` actually sends/expects, causing a live 400 in production:
+    1. `app.js` posts the **full data URL** (`data:image/jpeg;base64,...`) as `image`. The
+old endpoint forwarded that whole string into Gemini's `inline_data.data`, which only accepts
+raw base64 — hence `"Base64 decoding failed for \"data:image/jpeg;base64,...\""`. Fixed by
+stripping everything before the first comma server-side.
+    2. `app.js` posts `items: [{id, name}]`, not a flat name list — old endpoint expected
+`itemNames: string[]`. Fixed to read `items[].name` for the prompt and keep `items[].id`
+around for matching.
+    3. `app.js`'s `handleReceiptFile()`/`showReceiptResult()` expect the response as
+`{ matches: [{itemId, price}], extras: [{name, price}] }`. Old endpoint returned
+`{ matched: [{listName, receiptName, price}], unmatched: [{name, price}] }` — different keys
+entirely, so even a successful Gemini call would have rendered nothing. Fixed to emit
+`matches`/`extras` with the exact shape `app.js` reads.
+  - `vercel.json` already had `"api/match-receipt.js": { "maxDuration": 30 }` pre-provisioned
+— no change needed. In-file `AbortController` stays at 22s (nested under the 30s budget,
+matching the pattern used by `parse-list.js`/`health.js`).
+  - `sw.js` `CACHE_NAME` bumped `v15 → v16` this build so the "New version available" toast
+fires for users on the old client once this deploy goes live (the fix only touched an
+`/api/` file, which the service worker never caches, so nothing else *forced* a bump — bumping
+is still done here since `sw.js` itself changed).
+- **Phase 4 (polish, not started)**: turning "extras" (receipt items not in the list) into a
+tappable "+ Add to list" action instead of read-only display; discount/rounding tied to
+receipt scans; out-of-list item popup tagging.
 
 ## Stack
 - Vanilla HTML5, Tailwind CSS (CDN), Modular Vanilla JS
@@ -60,21 +56,21 @@ match-receipt: 30s)
 
 ## File Structure
 ```
-/index.html            -> App shell. Compact header, list as primary content, FAB + #addSheet,
-                           full receipt-scan UI markup already present (unwired — see Phase 3.2).
+/index.html            -> App shell. Receipt-scan UI markup (source sheet, scanning overlay,
+                           result modal) present and fully wired via app.js.
 /app.js                 -> State, renderAll(), findOrCreatePerson(), settlement engine, Edit/
                            Adjustments modals, Gemini connection check, toast(), swipe gestures,
-                           addSheet open/close/mode, Gemini-only parseWithGemini(). Receipt-scan
-                           handlers NOT YET ADDED (Phase 3.2, blocked — see above).
+                           addSheet, Gemini-only parseWithGemini(), and the full Phase 3 receipt
+                           flow: compressImageForUpload(), handleReceiptFile(),
+                           showReceiptResult(). Unchanged this build — bug was server-side.
 /api/parse-list.js      -> Vercel fn. Gemini scratchpad parser. Model: gemini-3.5-flash.
 /api/health.js          -> Gemini connection check. Model: gemini-3.5-flash.
-/api/match-receipt.js   -> NEW (this build). Gemini Vision receipt scan + fuzzy match.
+/api/match-receipt.js   -> FIXED this build. Gemini Vision receipt scan. Now strips the data-URL
+                           prefix before sending to Gemini and returns
+                           {matches:[{itemId,price}], extras:[{name,price}]} to match app.js.
 /manifest.json           -> unchanged
-/sw.js                   -> CACHE_NAME v11. Excludes /api/* from caching. Needs a version bump
-                           once app.js changes land in Phase 3.2 (not bumped yet — no app.js
-                           change has shipped in this build).
-/vercel.json             -> Already had maxDuration:30 reserved for api/match-receipt.js —
-                           pre-provisioned ahead of this build, no change needed now.
+/sw.js                   -> CACHE_NAME bumped v15 -> v16 this build.
+/vercel.json             -> unchanged (maxDuration for match-receipt already present).
 /icons/*.png             -> unchanged
 /CLAUDE_STATE.md         -> this file
 ```
@@ -83,17 +79,16 @@ match-receipt: 30s)
 Google retires Gemini models on a rolling cadence
 (https://ai.google.dev/gemini-api/docs/deprecations). All three API files
 (`parse-list.js`, `health.js`, `match-receipt.js`) call `gemini-3.5-flash`. If any start
-404ing, check the deprecations page and update the model string in all three (it appears once
-each, inside the `fetch()` URL). Consider migrating to the `gemini-flash-latest` alias later.
+404ing, check the deprecations page and update the model string in all three.
 
-## Timeout Budget — applies to match-receipt.js too
+## Timeout Budget
 ```
-Vercel functions.maxDuration (vercel.json)        match-receipt: 30s
-  └─ In-file AbortController (api/match-receipt.js)     22s
-       └─ Client fetch AbortController (app.js, once wired)   should be ~25s
+Vercel functions.maxDuration (vercel.json)   parse-list: 30s | health: 15s | match-receipt: 30s
+  └─ In-file AbortController (api/*.js)      parse-list: 22s | health: 10s | match-receipt: 22s
+       └─ Client fetch AbortController (app.js)  scratchpad: 25s | connection: 12s | receipt: 25s
 ```
-Keep this nesting order (server in-file timeout < maxDuration < client timeout) or the outer
-layer kills the request with a raw error before the inner layer can return clean JSON.
+Keep server in-file timeout < maxDuration < client timeout, or the outer layer kills the
+request with a raw error before the inner layer can return clean JSON.
 
 ## Data Model (unchanged)
 ```
@@ -105,10 +100,18 @@ Adjustments = { discount: number, rounding: number }
 Storage keys unchanged: `smarttroli_items_v4`, `smarttroli_people_v2`,
 `smarttroli_adjustments_v2`.
 
+## Service Worker Update-Popup Policy — IMPORTANT
+The "New version available" toast (`index.html`) only fires when `sw.js`'s own byte content
+changes, because that's what `reg.update()` diffs — it does NOT check `app.js`/`index.html`
+directly. **Whenever a deploy changes `app.js`, `index.html`, or `manifest.json`, bump
+`CACHE_NAME` in `sw.js` in the same deploy**, even if `sw.js`'s logic itself didn't otherwise
+change — the version-string bump is what makes the byte diff exist. Deploys that only touch
+`/api/*` files don't strictly need a bump (API routes bypass the cache entirely), but bumping
+anyway (as done this build) is a safe default when in doubt.
+
 ## Known Gaps / Next Steps
-1. **`app.js` receipt-scan wiring** — the actual next task, blocked on getting current
-`app.js`/`sw.js` content pasted in (see Phase 3.2 above).
-2. Gemini model string hardcoded in 3 files — worth migrating to `gemini-flash-latest` alias.
+1. **Phase 4**: make "extras" (unmatched receipt items) tappable to add straight into the list.
+2. Gemini model string hardcoded in 3 files — consider `gemini-flash-latest` alias.
 3. Shared-item cost still splits evenly across all people — no custom ratio.
 4. Auto-created people (from salutation detection) start with `cashAdvance: 0` — no nudge yet.
 5. `appToast` and `updateToast` share screen position — low-priority stacking issue.
@@ -116,8 +119,8 @@ Storage keys unchanged: `smarttroli_items_v4`, `smarttroli_people_v2`,
 
 ## Setup Reminder
 `GEMINI_API_KEY` must be set in Vercel → Settings → Environment Variables. No new env vars
-needed for `match-receipt.js` — it reuses the same key.
+needed — `match-receipt.js` reuses the same key.
 
 ## Next Prompt Should Confirm
-- Paste current `app.js` + `sw.js` so Phase 3.2 (client wiring) can be completed as full-file
-overwrites.
+- Confirm receipt scan now works end-to-end on-device after this deploy.
+- Move to Phase 4 (tappable "extras" → add to list) or another polish item from Known Gaps?

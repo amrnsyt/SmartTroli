@@ -1,22 +1,30 @@
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed', reason: 'method' });
+    res.status(405).json({ error: 'Method not allowed' });
     return;
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    res.status(500).json({ error: 'Server is missing GEMINI_API_KEY', reason: 'config' });
+    res.status(500).json({ error: 'Server is missing GEMINI_API_KEY' });
     return;
   }
 
-  const { image, mimeType, itemNames } = req.body || {};
+  const { image, mimeType, items } = req.body || {};
   if (!image || typeof image !== 'string') {
-    res.status(400).json({ error: 'No receipt image provided', reason: 'input' });
+    res.status(400).json({ error: 'No receipt image provided' });
     return;
   }
 
-  const knownItems = Array.isArray(itemNames) ? itemNames.filter(Boolean) : [];
+  // app.js sends a full data URL (e.g. "data:image/jpeg;base64,/9j/4AAQ...") straight from
+  // canvas.toDataURL(). Gemini's inline_data.data field wants ONLY the raw base64 payload —
+  // forwarding the "data:...;base64," prefix through is exactly what produced the
+  // "Base64 decoding failed" 400 the user hit. Strip it here.
+  const base64Data = image.includes(',') ? image.split(',')[1] : image;
+
+  // app.js sends items as [{id, name}], not a flat name list — keep both id and name so the
+  // match result can carry itemId back for State.updateItem().
+  const knownItems = Array.isArray(items) ? items.filter((i) => i && i.id && i.name) : [];
 
   const prompt = `You are reading a Malaysian grocery/supermarket receipt photo.
 Extract every purchased line item you can read, with its final price in Ringgit (RM).
@@ -29,7 +37,7 @@ If the photo is unreadable, blurry, or is not a receipt, return {"items":[]}.
 For reference, here is the shopper's current grocery list (use this ONLY to help you resolve
 ambiguous/abbreviated receipt names to a fuller name when confident — do not invent items that
 aren't on the receipt):
-${knownItems.join(', ') || '(list is empty)'}`;
+${knownItems.map((i) => i.name).join(', ') || '(list is empty)'}`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 22000);
@@ -46,7 +54,7 @@ ${knownItems.join(', ') || '(list is empty)'}`;
             {
               parts: [
                 { text: prompt },
-                { inline_data: { mime_type: mimeType || 'image/jpeg', data: image } }
+                { inline_data: { mime_type: mimeType || 'image/jpeg', data: base64Data } }
               ]
             }
           ],
@@ -59,7 +67,7 @@ ${knownItems.join(', ') || '(list is empty)'}`;
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      res.status(502).json({ error: `Gemini API error (${response.status}): ${errText.slice(0, 300)}`, reason: 'api' });
+      res.status(502).json({ error: `Gemini API error (${response.status}): ${errText.slice(0, 300)}` });
       return;
     }
 
@@ -70,7 +78,7 @@ ${knownItems.join(', ') || '(list is empty)'}`;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      res.status(502).json({ error: 'Gemini returned malformed JSON', reason: 'parse' });
+      res.status(502).json({ error: 'Gemini returned malformed JSON' });
       return;
     }
 
@@ -83,10 +91,12 @@ ${knownItems.join(', ') || '(list is empty)'}`;
         .replace(/\s+/g, ' ')
         .trim();
 
-    const normalizedKnown = knownItems.map((n) => ({ original: n, norm: normalize(n) }));
+    const normalizedKnown = knownItems.map((i) => ({ id: i.id, name: i.name, norm: normalize(i.name) }));
 
-    const matched = [];
-    const unmatched = [];
+    // matches -> [{itemId, price}], extras -> [{name, price}] — matches exactly what
+    // handleReceiptFile()/showReceiptResult() in app.js already expect.
+    const matches = [];
+    const extras = [];
 
     for (const ri of receiptItems) {
       const riName = String(ri.name || '').trim();
@@ -104,19 +114,19 @@ ${knownItems.join(', ') || '(list is empty)'}`;
       }
 
       if (best) {
-        matched.push({ listName: best.original, receiptName: riName, price: riPrice });
+        matches.push({ itemId: best.id, price: riPrice });
       } else {
-        unmatched.push({ name: riName, price: riPrice });
+        extras.push({ name: riName, price: riPrice });
       }
     }
 
-    res.status(200).json({ matched, unmatched });
+    res.status(200).json({ matches, extras });
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
-      res.status(504).json({ error: 'Gemini took too long to read the receipt (timeout)', reason: 'timeout' });
+      res.status(504).json({ error: 'Gemini took too long to read the receipt (timeout)' });
       return;
     }
-    res.status(502).json({ error: 'Could not reach Gemini', reason: 'network' });
+    res.status(502).json({ error: 'Could not reach Gemini' });
   }
 }

@@ -4,6 +4,8 @@
 // Line items on the receipt that don't match anything in the list come back as "extras"
 // (info-only in this build — tagging extras into the list is Phase 4).
 
+const { safeJsonParse } = require('./_lib');
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -109,9 +111,10 @@ fences, no extra commentary.`;
       return;
     }
 
+    // NOTE (Phase 2.14): same thought-leak fix as parse-list.js — see api/_lib.js.
     let parsed;
     try {
-      parsed = JSON.parse(raw);
+      parsed = safeJsonParse(raw);
     } catch (e) {
       res.status(502).json({ error: 'Gemini returned unparseable JSON.', raw });
       return;

@@ -126,6 +126,24 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
        — rendered as a colored dot + tinted label. Colors are assigned by category name (not
        render order), so a category keeps the same color across every render.
      - Dark-mode checkbox accent updated to match (`#34D399`, was `#7FA96B`).
+- **Phase 2.14 (THIS BUILD — bugfix, complete)**: Fixed `"Gemini API error: Gemini returned
+  unparseable JSON"` on scratchpad parsing (screenshot showed it firing on a normal list —
+  not an edge case). Root cause: Phase 2.11 added `thinkingConfig: { thinkingLevel: "low" }`
+  to get 504s under control, but that's exactly what reintroduced this — Gemini 3.x models can
+  leak reasoning/thought text ahead of the real answer even when no part is flagged
+  `thought: true` and even with `responseMimeType: "application/json"` (documented upstream
+  quirk, see `googleapis/python-genai#2121`). `gemini-1.5-flash` never had a thinking pass, so
+  this never happened before Phase 2.11 — the symptom is new, but the underlying cause is the
+  same thinking-latency tradeoff that Phase 2.11 accepted, not a regression in this build.
+  Fix: new `api/_lib.js` (underscore-prefixed so Vercel doesn't turn it into a route, but it's
+  still `require()`-able from sibling functions) exports `safeJsonParse()` — tries a plain
+  `JSON.parse()` first, then strips markdown fences, then falls back to locating the real
+  JSON value (first `[`/`{` to its matching last `]`/`}`) inside whatever text Gemini actually
+  returned, instead of assuming the whole string is clean JSON. Wired into both
+  `api/parse-list.js` and `api/match-receipt.js` (same failure mode applies to both, since both
+  set `thinkingConfig`). `api/health.js` untouched — it never parses Gemini's answer as JSON.
+  No change to `thinkingLevel: "low"` itself — reverting that would bring back the Phase 2.11
+  504s, so this is a parse-robustness fix layered on top rather than a tradeoff reversal.
 
 ## Stack
 - Vanilla HTML5, Tailwind CSS (CDN), Modular Vanilla JS
@@ -174,15 +192,23 @@ apply it. `sw.js` `CACHE_NAME` bumped v11 -> v12 to ship this as a detectable ne
                           entry points.
 /api/parse-list.js     -> Vercel serverless fn. Prompt unchanged. Model: gemini-3.5-flash.
                           Phase 2.11: generationConfig now sets thinkingConfig.thinkingLevel
-                          = "low" — the real fix for the recurring 504s (thinking latency,
-                          not the model string, which was already correct/current).
+                          = "low" (fixed the 504s). Phase 2.14: JSON.parse(raw) replaced with
+                          _lib.js's safeJsonParse(raw) — thinkingLevel can still leak thought
+                          text ahead of the real JSON; this strips it instead of trusting raw.
 /api/health.js         -> Gemini connection check. Same thinkingLevel: "low" fix as
                           parse-list.js. maxOutputTokens raised 5 -> 32 (thinking tokens eat
-                          into this budget even at low level).
+                          into this budget even at low level). Doesn't parse Gemini's answer as
+                          JSON, so Phase 2.14's safeJsonParse fix doesn't apply here.
 /api/match-receipt.js  -> NEW (Phase 3). Vercel serverless fn, Gemini Vision. Takes a base64
                           receipt photo + the user's {id,name} item list, returns {matches:
                           [{itemId,price}], extras:[{name,price}]}. Same timeout-budget
-                          convention and thinkingLevel: "low" as parse-list.js.
+                          convention and thinkingLevel: "low" as parse-list.js. Phase 2.14:
+                          also uses _lib.js's safeJsonParse(raw) for the same leak reason.
+/api/_lib.js           -> NEW (Phase 2.14). Underscore-prefixed so Vercel does NOT expose it as
+                          a route, but parse-list.js/match-receipt.js require() it fine.
+                          Exports safeJsonParse(raw): plain JSON.parse -> strip markdown fence
+                          -> locate first [ or { to its matching last ] or } and parse that
+                          slice. Add any future Gemini-calling endpoint's parsing here too.
 /manifest.json         -> unchanged
 /sw.js                 -> CACHE_NAME bumped ... -> v13 -> v14 (latest: Phase 3.1 index.html +
                           app.js changes). Fetch handler excludes /api/* paths from caching
@@ -370,28 +396,34 @@ Photo, Upload Photo, Settle) — too many to comfortably fit one fixed-width row
 - [x] Redesigned dark theme — vivid gradient accents, color-coded categories, no more flat/gloomy
 
 ## Known Gaps / Next Steps
-1. **Receipt "extras" are read-only (Phase 4 territory).** `/api/match-receipt.js` returns
+1. **safeJsonParse (Phase 2.14) is a mitigation, not a guarantee.** It handles leaked
+   thought-text and markdown fences around a JSON value, but if Gemini ever returns something
+   with NO recognizable `[`/`{` at all (e.g. a plain apology sentence with zero JSON), the
+   endpoint still correctly fails with "unparseable JSON" rather than silently returning
+   garbage — that's intended, just worth knowing this isn't a 100%-uptime guarantee against
+   Gemini being uncooperative, only against the specific leak pattern that was happening.
+2. **Receipt "extras" are read-only (Phase 4 territory).** `/api/match-receipt.js` returns
    unmatched receipt lines, and `#receiptModal` displays them, but there's no tap-to-add
    action yet — the user still has to add those manually via the structured form.
-2. **Gemini model string is hardcoded, not aliased.** `gemini-3.5-flash` works today but Google
+3. **Gemini model string is hardcoded, not aliased.** `gemini-3.5-flash` works today but Google
    ships breaking model retirements every few months. Worth migrating to the `gemini-flash-latest`
    alias (auto-points to current GA flash model) in a future pass so this class of bug can't
    recur silently.
-3. Shared-item cost still splits evenly across all people (including "Me") — no custom ratio.
-4. Auto-created people (from salutation detection) start with `cashAdvance: 0` — user should be
+4. Shared-item cost still splits evenly across all people (including "Me") — no custom ratio.
+5. Auto-created people (from salutation detection) start with `cashAdvance: 0` — user should be
    nudged to fill in the real advance amount; currently just relies on them tapping the person
    chip area manually.
-5. Scratchpad and receipt scanning both strictly require internet — worth double-checking the
+6. Scratchpad and receipt scanning both strictly require internet — worth double-checking the
    UX makes it obvious to a user in a low-signal supermarket that Structured mode (manual add)
    is the only offline-safe path.
-6. `appToast` and `updateToast` still share screen position — low-priority stacking issue.
-7. FAB vertical offset (`bottom: calc(6.5rem + safe-area)`) is a fixed estimate to clear the
+7. `appToast` and `updateToast` still share screen position — low-priority stacking issue.
+8. FAB vertical offset (`bottom: calc(6.5rem + safe-area)`) is a fixed estimate to clear the
    footer — if footer content wraps to more lines on a very narrow screen, worth re-checking
    for overlap on-device.
-8. Receipt matching sends the FULL item list (id+name) to Gemini every scan, regardless of
+9. Receipt matching sends the FULL item list (id+name) to Gemini every scan, regardless of
    `inTrolley` status — fine at current list sizes, but worth revisiting (e.g. only send items
    still missing a price) if lists grow large enough to affect prompt size/latency.
-9. No de-dupe guard if the same receipt is scanned twice — a second scan will just re-match and
+10. No de-dupe guard if the same receipt is scanned twice — a second scan will just re-match and
    overwrite prices again (harmless, just redundant) rather than warning "already scanned."
 
 ## Setup Reminder (unchanged)

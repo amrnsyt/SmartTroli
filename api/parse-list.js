@@ -2,6 +2,8 @@
 // Vercel Node.js Serverless Function — auto-detected, zero build step.
 // Reads GEMINI_API_KEY from a Vercel Environment Variable (never sent to the client).
 
+const { safeJsonParse } = require('./_lib');
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -120,9 +122,12 @@ ${text}
       return;
     }
 
+    // NOTE (Phase 2.14): thinkingLevel:'low' doesn't guarantee thought-free output — Gemini 3.x
+    // can leak reasoning text ahead of the real JSON even without a part flagged thought:true.
+    // safeJsonParse() (api/_lib.js) strips that leaked text instead of trusting `raw` is clean.
     let items;
     try {
-      items = JSON.parse(raw);
+      items = safeJsonParse(raw);
     } catch (e) {
       res.status(502).json({ error: 'Gemini returned unparseable JSON.', raw });
       return;

@@ -309,6 +309,7 @@ function renderItem(item) {
 
   li.innerHTML = `
     <div class="editRow absolute inset-0 flex items-center justify-end gap-2 px-3 bg-troli-orange/90">
+      ${item.scanned ? '<button class="undoBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">↩ Undo</button>' : ''}
       <button class="editBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">Edit</button>
       <button class="delBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/30 rounded-full">Delete</button>
     </div>
@@ -328,6 +329,16 @@ function renderItem(item) {
   li.querySelector('.editBtn').addEventListener('click', () => openEditModal(item));
   const addQtyBtn = li.querySelector('.addQtyBtn');
   if (addQtyBtn) addQtyBtn.addEventListener('click', () => openEditModal(item, 'qty'));
+  const undoBtn = li.querySelector('.undoBtn');
+  if (undoBtn) undoBtn.addEventListener('click', () => {
+    // Phase 10 step 1 — sends a mis-scanned/incorrectly-matched Bought item back to To Buy.
+    // Only the receipt-derived state (scanned + inTrolley) is reset — name/price/qty/owner
+    // are left as-is, since that data is still valid and the user may want to keep or edit it
+    // from the To Buy tab (e.g. via the normal Edit action) rather than losing it outright.
+    State.updateItem(item.id, { scanned: false, inTrolley: false });
+    renderAll();
+    toast(`${item.name} sent back to To Buy`, 'info');
+  });
 
   // Swipe gestures
   let startX = 0, currentX = 0, dragging = false;

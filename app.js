@@ -585,9 +585,25 @@ el.geminiCheckBtn.addEventListener('click', () => checkGeminiConnection(false));
 // which always starts at RM 0.00) could never be corrected without deleting and re-adding them.
 let editingPersonId = null;
 
-function openPersonModal(person) {
+// Phase 10 step 2 — cash-advance nudge queue. Holds personIds that were just auto-created
+// from a scratchpad salutation header (e.g. "Abah :") and still sit at the default
+// cashAdvance: 0 with no prompt to ever set one (Known Gap #3). Processed one at a time
+// through the SAME person modal used for normal add/edit, so no new UI surface is needed.
+let cashNudgeQueue = [];
+
+function processCashNudgeQueue() {
+  if (cashNudgeQueue.length === 0) return;
+  const personId = cashNudgeQueue.shift();
+  const person = State.people.find(p => p.id === personId);
+  if (!person) { processCashNudgeQueue(); return; } // person was removed before its turn came up
+  openPersonModal(person, true);
+}
+
+function openPersonModal(person, isNudge = false) {
   editingPersonId = person ? person.id : null;
-  el.personModalTitle.textContent = person ? 'Edit Family Member' : 'Add Family Member';
+  el.personModalTitle.textContent = isNudge
+    ? `Set cash advance for ${person.name}?`
+    : (person ? 'Edit Family Member' : 'Add Family Member');
   el.personName.value = person ? person.name : '';
   el.personCash.value = person ? (person.cashAdvance || 0) : '';
   el.personSaveBtn.textContent = person ? 'Save Changes' : 'Save';
@@ -595,7 +611,11 @@ function openPersonModal(person) {
 }
 
 el.addPersonBtn.addEventListener('click', () => openPersonModal(null));
-el.personCancelBtn.addEventListener('click', () => { editingPersonId = null; el.personModal.classList.add('hidden'); });
+el.personCancelBtn.addEventListener('click', () => {
+  editingPersonId = null;
+  el.personModal.classList.add('hidden');
+  if (cashNudgeQueue.length) processCashNudgeQueue(); // skipping this nudge still advances to the next
+});
 el.personSaveBtn.addEventListener('click', () => {
   const name = el.personName.value.trim();
   if (!name) return;
@@ -607,6 +627,7 @@ el.personSaveBtn.addEventListener('click', () => {
   editingPersonId = null;
   el.personModal.classList.add('hidden');
   renderAll();
+  if (cashNudgeQueue.length) processCashNudgeQueue();
 });
 
 // ---------- Settlement modal ----------
@@ -796,12 +817,20 @@ el.scratchConfirmBtn.addEventListener('click', () => {
   });
 
   const items = pendingParsed;
+  // Phase 10 step 2 — track which people were genuinely NEW this parse (vs already existing)
+  // so we can nudge for their cash advance right after, instead of leaving them silently at
+  // the default cashAdvance: 0 forever (Known Gap #3).
+  const newlyCreatedPersonIds = [];
   items.forEach(p => {
     let ownerId;
     if (p.ownerName && p.ownerName.trim().toLowerCase() === 'shared') {
       ownerId = 'shared';
     } else if (p.ownerName) {
+      const beforePeopleCount = State.people.length;
       ownerId = State.findOrCreatePerson(p.ownerName);
+      if (State.people.length > beforePeopleCount && !newlyCreatedPersonIds.includes(ownerId)) {
+        newlyCreatedPersonIds.push(ownerId);
+      }
     } else {
       ownerId = 'me';
     }
@@ -819,6 +848,14 @@ el.scratchConfirmBtn.addEventListener('click', () => {
   const combinedNote = combinedCount ? ` ${combinedCount} combined into Shared.` : '';
 
   toast(`Added ${items.length} item(s), sorted by category.${peopleNote}${combinedNote}`, 'success');
+
+  // Nudge for a cash advance on each newly auto-created person, one at a time, right after
+  // the add sheet closes — Cancel/backdrop-dismiss simply skips that person and moves to the
+  // next; nothing here is mandatory.
+  if (newlyCreatedPersonIds.length) {
+    cashNudgeQueue = [...newlyCreatedPersonIds];
+    processCashNudgeQueue();
+  }
 });
 
 // ---------- Phase 3 — Gemini Vision receipt scan ----------
@@ -1124,7 +1161,10 @@ el.receiptCloseBtn.addEventListener('click', () => el.receiptModal.classList.add
 function closeAnyModal(modalEl) {
   modalEl.classList.add('hidden');
   if (modalEl === el.editModal) editingId = null;
-  if (modalEl === el.personModal) editingPersonId = null;
+  if (modalEl === el.personModal) {
+    editingPersonId = null;
+    if (cashNudgeQueue.length) processCashNudgeQueue(); // backdrop-dismissing a nudge still advances the queue
+  }
 }
 [el.personModal, el.settleModal, el.editModal, el.adjustModal, el.receiptModal, el.receiptSourceSheet].forEach((modalEl) => {
   modalEl.addEventListener('click', (e) => { if (e.target === modalEl) closeAnyModal(modalEl); });

@@ -21,25 +21,33 @@ client timeout budgets bumped to fit (30s->45s server, 25s->40s client). `sw.js`
 - **Phase 9 step 3 (complete)**: local OCR fallback for a Gemini outage during receipt
 scanning — ported from the `Shoppy-With-Wifey` reference project (Tesseract.js CDN-loaded on
 demand, regex line-parsing, `usedFallback` notice banner in the results modal). `sw.js` -> v20.
-- **Phase 10 step 1 (THIS BUILD — complete)**: "Undo" action for a mis-scanned Bought item.
-  - **Trigger**: addressed Known Gap #1 / the top Phase 10 candidate — previously the only way
-to correct a wrongly-matched or accidentally-scanned Bought item was Edit (which can't change
-`scanned` back to false) or Delete (which loses the item entirely).
-  - **Implementation**: `renderItem()` in `app.js` now renders an extra "↩ Undo" button in the
-swipe-reveal `editRow` — but ONLY when `item.scanned` is true (never shown for To Buy items,
-where there's nothing to undo). Tapping it calls
-`State.updateItem(item.id, { scanned: false, inTrolley: false })` then `renderAll()` and shows
-a confirmation toast. Deliberately does NOT touch `name`/`price`/`qty`/`unit`/`owner` — those
-stay as the receipt/edit left them, since the user may still want that data (e.g. the receipt
-price) after sending the item back to To Buy; they can adjust via the normal Edit modal from
-there if needed.
-  - **No new UI components, no new state fields, no API/schema changes** — this was a pure
-`app.js` behavior addition reusing the existing swipe-reveal action row pattern (same row that
-already has Edit/Delete), so it works identically in both To Buy and Bought tab contexts.
-  - `sw.js` `CACHE_NAME` bumped `v20` -> `v21` since `app.js` changed again this build.
+- **Phase 10 step 1 (complete)**: "↩ Undo" action for a mis-scanned Bought item — swipe-reveal
+button shown only when `item.scanned === true`, resets `scanned`/`inTrolley` back to false via
+`State.updateItem` and shows a confirmation toast. Leaves name/price/qty/owner untouched.
+`sw.js` -> v21.
+- **Phase 10 step 2 (THIS BUILD — complete)**: Cash-advance nudge for auto-created family
+members.
+  - **Trigger**: Known Gap #3 — people auto-created from a scratchpad salutation header (e.g.
+"Abah :") previously landed at `cashAdvance: 0` with nothing ever prompting the user to set a
+real value, unless they happened to manually tap that person's chip afterward.
+  - **Implementation** (`app.js`):
+    - The scratchpad-confirm handler (`el.scratchConfirmBtn` click) now tracks
+`newlyCreatedPersonIds` by comparing `State.people.length` before/after each
+`State.findOrCreatePerson()` call — only people that didn't already exist go on the list
+(re-tagging an existing person, e.g. "Mak" on a later parse, does NOT re-trigger a nudge).
+    - After items are added and the add-sheet closes/toasts as before, if any new people were
+created this parse, `cashNudgeQueue` is seeded with their ids and
+`processCashNudgeQueue()` opens the existing Person modal for the first one, retitled
+`"Set cash advance for {name}?"` via a new `isNudge` param on `openPersonModal(person, isNudge)`.
+    - Saving, Cancel, or backdrop-dismissing that modal all advance to the next queued person
+(`processCashNudgeQueue()` is called from `personSaveBtn`, `personCancelBtn`, and
+`closeAnyModal()`) until the queue is empty — entirely skippable, never blocks the user, and
+reuses the same modal/markup as normal add/edit (no new UI component).
+  - **No API/schema/data-model changes** — pure `app.js` behavior addition on top of the
+existing Person modal and `findOrCreatePerson` logic.
+  - `sw.js` `CACHE_NAME` bumped `v21` -> `v22` since `app.js` changed again this build.
 - **Phase 10 (remaining candidates, not started)**:
   - Custom shared-split ratios (currently splits evenly across all people).
-  - Cash-advance nudge for auto-created people (start at RM 0.00 with no prompt to set one).
   - Manual "Use local OCR" button (skip Gemini entirely) for users who already know they're
 offline/out of quota, instead of always waiting out the Gemini attempt+timeout first.
 
@@ -58,16 +66,19 @@ fallback only. Not a bundled dependency; no build-step impact, no npm install ne
 ## File Structure
 ```
 /index.html            -> unchanged this build.
-/app.js                 -> UPDATED this build. renderItem() gained a conditional "↩ Undo"
-                           button (Phase 10 step 1) for Bought (item.scanned === true) rows,
-                           wired to reset scanned/inTrolley and send the item back to To Buy.
+/app.js                 -> UPDATED this build. Phase 10 step 2: cashNudgeQueue +
+                           processCashNudgeQueue(), openPersonModal(person, isNudge) retitle,
+                           personSaveBtn/personCancelBtn/closeAnyModal() all advance the queue,
+                           scratchConfirmBtn handler tracks newlyCreatedPersonIds and seeds the
+                           queue after a parse. (Phase 10 step 1's "↩ Undo" button from the
+                           prior build is also still present, unchanged this step.)
 /api/_gemini.js         -> unchanged this build.
 /api/_lib.js             -> unchanged this build.
 /api/parse-list.js      -> unchanged this build.
 /api/health.js           -> unchanged this build.
 /api/match-receipt.js   -> unchanged this build.
 /manifest.json           -> unchanged.
-/sw.js                   -> UPDATED this build. CACHE_NAME v20 -> v21 (app.js changed).
+/sw.js                   -> UPDATED this build. CACHE_NAME v21 -> v22 (app.js changed).
 /vercel.json             -> unchanged this build.
 /icons/*.png             -> unchanged.
 /CLAUDE_STATE.md         -> this file.
@@ -116,7 +127,9 @@ Adjustments = { discount: number, rounding: number }
 ```
 Storage keys unchanged: `smarttroli_items_v4`, `smarttroli_people_v2`,
 `smarttroli_adjustments_v2`. `Item.scanned` flipping back to `false` (Phase 10 step 1's Undo
-action) is a normal, expected transition now — not just receipt-scan-forward one-way.
+action) is a normal, expected transition now — not just receipt-scan-forward one-way. No new
+fields were added for Phase 10 step 2 — the cash-nudge flow only writes to the existing
+`Person.cashAdvance` via the existing `updatePerson`/`addPerson` methods.
 
 ## match-receipt.js Response Shape (unchanged, for reference)
 ```
@@ -128,22 +141,27 @@ action) is a normal, expected transition now — not just receipt-scan-forward o
 
 ## Service Worker Update-Popup Policy — IMPORTANT
 Bump `CACHE_NAME` in `sw.js` whenever `app.js`/`index.html`/`manifest.json` change. Last
-bumped: `v21` (this build — app.js changed).
+bumped: `v22` (this build — app.js changed).
 
 ## Known Gaps / Next Steps
 1. ~~No way to send a mis-scanned Bought item back to To Buy short of edit/delete.~~ RESOLVED
-this build (Phase 10 step 1 — Undo button).
+Phase 10 step 1 (Undo button).
 2. Shared-item cost still splits evenly across all people — no custom ratio.
-3. Auto-created people (from salutation detection) start with `cashAdvance: 0` — no nudge yet.
+3. ~~Auto-created people (from salutation detection) start with `cashAdvance: 0` — no nudge
+yet.~~ RESOLVED this build (Phase 10 step 2 — cash-advance nudge queue).
 4. `appToast`/`updateToast` share screen position; FAB vertical offset on-device check.
 5. Local OCR fallback (Phase 9 step 3) is still untested against a real receipt photo — accuracy
 of the trailing-price regex against real-world OCR noise (misread decimals, missing spaces)
 should be verified on-device before relying on it.
 6. Consider a manual "skip Gemini, use local OCR" option (Phase 10 candidate) so a user who
 already knows they're offline doesn't have to wait out the full ~40s Gemini timeout first.
-7. New this build: the Undo action (Phase 10 step 1) has not yet been tested on-device against
-a real scanned item — confirm the swipe-reveal row correctly shows Undo+Edit+Delete together
-without crowding/overflow on a small screen width.
+7. Phase 10 step 1's Undo action has not yet been tested on-device against a real scanned item
+— confirm the swipe-reveal row correctly shows Undo+Edit+Delete together without
+crowding/overflow on a small screen width.
+8. New this build: the cash-advance nudge queue (Phase 10 step 2) has not yet been tested
+on-device with a real multi-person scratchpad parse (e.g. a list with both "Abah :" and
+"Mak:" sections in one paste) — confirm the modal correctly queues and re-opens for the
+second person immediately after the first is saved/skipped, without any UI flash/overlap.
 
 ## Setup Reminder
 `GEMINI_API_KEY` (or `GEMINI_API_KEYS`) must be set in Vercel → Settings → Environment
@@ -151,8 +169,11 @@ Variables. No setup needed for Tesseract.js — it's CDN-loaded automatically on
 fallback path triggers.
 
 ## Next Prompt Should Confirm
-- Test the new Undo action on-device: scan/mark an item as Bought, swipe it, tap "↩ Undo",
-confirm it reappears correctly in the To Buy tab with its data intact.
+- Test the cash-advance nudge queue on-device: paste a scratchpad list with 2+ new salutation
+sections in one go, confirm the Person modal pops up once per new person in sequence, and that
+Cancel/backdrop-dismiss on one correctly advances to the next instead of getting stuck.
+- Test the Undo action on-device: scan/mark an item as Bought, swipe it, tap "↩ Undo", confirm
+it reappears correctly in the To Buy tab with its data intact.
 - Test the local OCR fallback on-device: temporarily break/disable the Gemini key to force the
 fallback path, scan a real receipt, and check how usable the auto-extracted extras are.
 - Also still pending from Phase 9 step 2: verify the two-call Gemini match path itself

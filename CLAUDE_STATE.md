@@ -6,63 +6,65 @@ expenses within families/shared households. AI (Gemini) turns chaotic WhatsApp l
 clean, categorized, per-person shared checklist and a single settlement instruction
 ("Arahan Malas"). Lists start QUANTITY-first — prices are added at the shelf/checkout, and a
 receipt scan is what confirms an item as actually bought. Real shopping happens across
-multiple stops, so the list is split into what's still outstanding vs what's already been
-purchased and priced by a receipt, rather than one flat list forever.
+multiple stops, so the list is split into To Buy / Bought rather than one flat list forever.
 
 ## Phase Roadmap
-- **Phase 1–3 (complete)**: settlement engine, Gemini-only scratchpad, Gemini Vision receipt
-scan (`/api/match-receipt.js` fixed to match `app.js`'s actual `{matches,extras}` contract).
-- **Phase 4 (complete, superseded by Phase 5 below)**: tappable "+ Add" on receipt extras —
-replaced this build by the dropdown-assign flow, which is strictly more capable.
-- **Phase 5 (THIS BUILD — complete)**: multi-stop shopping model.
-  1. **New `item.scanned` flag** (`app.js` `State.addItem()` + item shape comment). `true`
-means a receipt has confirmed this item as bought. Items from older localStorage without the
-field read as falsy everywhere — no migration needed.
-  2. **To Buy / Bought tabs** — pill toggle added to `index.html` above the list
-(`#tabToBuyBtn` / `#tabBoughtBtn`), driven by `currentTab` + `setActiveTab()` in `app.js`.
-`tabItems()` filters `State.items` by `!scanned` (To Buy) or `scanned` (Bought).
-`renderAll()` now renders whichever set is active; category grouping still applies within
-each tab. `itemCount` now reflects the active tab's count, not the global total.
-  3. **FAB scoped to To Buy** — `setActiveTab()` toggles `el.addFab`'s `hidden` class; adding
-new items only makes sense while still shopping, not when reviewing what's already bought.
-  4. **Sort-to-bottom in To Buy** — items manually checked off (`inTrolley`) before ever being
-scanned sink to the bottom of their category via a stable sort in `renderAll()`, so the top of
-the list always shows what's genuinely still outstanding. Bought tab has no special sort by
-design — natural scan/add order.
-  5. **Qty → Price swap in `renderItem()`** — once `item.scanned` is true, the trailing badge
-shows price instead of qty, and the subtitle drops the redundant price text and shows qty
-there instead (if any was ever set). Non-scanned items render exactly as before (qty badge/Add
-Qty button, price-or-TBD in subtitle).
-  6. **Rename-on-match + auto-Bought** — `/api/match-receipt.js` now returns `receiptName` on
-every match. `handleReceiptFile()` renames the matched item to the receipt's printed name (the
-receipt is ground truth; the original scratchpad/manual name was only ever a guess), applies
-the price, and sets `scanned: true, inTrolley: true` together — a receipt line is proof of
-purchase, not just a price update.
-  7. **Dropdown-assign for extras** (replaces Phase 4's flat "+ Add" button) —
-`showReceiptResult()` gives each unmatched receipt line a `<select>` populated with every
-remaining To Buy item plus a "+ Add as new item" option. Choosing an existing item renames +
-prices + moves it to Bought, same as an auto-match. Choosing "new" creates a fresh Bought item
-(qty left `null`/TBD — a receipt confirms price, not a countable qty). Once assigned, that
-target is removed from every other still-open extra row's dropdown (can't double-assign the
-same item), and the row collapses to an "Added to Bought as ..." tag.
-  8. **Only To Buy items sent as match candidates** — `handleReceiptFile()` now sends
-`State.items.filter(i => !i.scanned)` to `/api/match-receipt`, so a second/third grocery
-stop's receipt can't re-match something an earlier receipt already confirmed bought.
-  9. **Progress bar removed entirely** — the "IN TROLLEY X%" rail and its markup are gone from
-`index.html`; `State.progressPercent()` removed from `app.js` as dead code. The To
-Buy/Bought split now communicates shopping progress instead.
-  10. **Global backdrop-click-to-close** — every modal (`personModal`, `settleModal`,
-`editModal`, `adjustModal`, `receiptModal`, `receiptSourceSheet`) now closes on a tap outside
-its card, via a shared `closeAnyModal()` + forEach listener block in `app.js`, extending the
-pattern `addSheet` already had. `receiptScanningOverlay` deliberately excluded — it's an
-active loading state, not user-dismissible.
-- **Phase 6 (not started, candidates)**:
-  - Duplicate-match policy (two receipt lines both matching one list item — currently
-last-write-wins on price).
-  - Custom shared-split ratios (currently always even across all people).
-  - Cash-advance nudge for auto-created people.
-  - "Undo"/send-back-to-To-Buy action for a mis-scanned Bought item (currently only
-edit/delete are available on Bought rows).
+- **Phase 1–5 (complete)**: settlement engine, Gemini-only scratchpad, Gemini Vision receipt
+scan with rename-on-match, dropdown-assign for unrecognized receipt lines, To Buy/Bought tabs,
+qty↔price swap on scan, global backdrop-click-close. See prior builds for full detail.
+- **Phase 6 (THIS BUILD — complete)**: Gemini API 429 (rate-limit/quota) mitigation.
+  - **Root cause**: not a code regression — confirmed the scratchpad parsing code was
+untouched. 429s were real Gemini-side rate-limiting/quota exhaustion, driven by every feature
+(scratchpad parses, health checks, receipt scans) sharing one API key's one quota pool, plus
+heavy testing volume during Phases 3-5.
+  - **New `/api/_gemini.js`** — shared transport helper used by all three Gemini-calling
+functions. Reads `GEMINI_API_KEYS` (comma-separated) with fallback to the original single
+`GEMINI_API_KEY` for backward compatibility. On a `429`/`503` response, rotates to the next
+configured key before failing; if every key is exhausted, does one delayed (1.2s) same-key
+retry specifically for `429` (bursts often clear within a second or two) before giving up.
+Splits the caller's total timeout budget across however many keys are configured (floor 6s/
+attempt) so worst-case rotation still finishes inside Vercel's `maxDuration` instead of
+surfacing a raw 504. Verified with 5 mocked-fetch test cases (multi-key rotation, single-key
+delayed retry, full exhaustion, no-key config, non-retryable status skips rotation) — all
+passing.
+  - **IMPORTANT CAVEAT, must tell the user if not already understood**: key rotation only
+increases real capacity if each key comes from a SEPARATE Google Cloud project (or separate
+Google account). Multiple keys under the same project share one quota pool — rotating between
+them still 429s at the same total request count. This was flagged to the user; awaiting
+confirmation they have (or will create) multiple projects.
+  - **Model tiering** — `parse-list.js` and `health.js` moved from `gemini-3.5-flash` to
+`gemini-3.1-flash-lite` (confirmed GA since March 2026, ~6x cheaper, text-focused). Rationale:
+these are text-only tasks, so putting them on a different model tier gives them a separate
+quota pool from the vision calls in `match-receipt.js` — heavy receipt-scanning during a
+shopping trip no longer starves scratchpad parsing (or vice versa) of requests on the shared
+`gemini-3.5-flash` pool. `match-receipt.js` stays on `gemini-3.5-flash` — it's the
+confirmed-multimodal model; flash-lite's image support wasn't established, not worth the risk
+on the receipt path. `thinkingConfig: { thinkingLevel: 'low' }` was dropped from the two
+flash-lite calls (that was a 3.5-flash-specific latency workaround; flash-lite may not support
+the field and doesn't need it).
+  - **`match-receipt.js` converted from ESM (`export default`) to CommonJS
+(`module.exports`)** — for consistency with `parse-list.js`/`health.js`/`_lib.js`, which were
+already CommonJS. Also restores `receiptName` on each match (present in the version built
+during Phase 5, but the copy uploaded for this build's file review predated that — verified
+it's back and matches what `app.js`'s `handleReceiptFile()` expects).
+  - **Evaluated a user-forwarded list of 5 suggestions from Gemini itself** (native
+`responseSchema`, model tiering, client-side image compression, stateless calls, local RegEx
+fallback). Adopted tiering (above). Image compression and stateless calls were already true
+before this build. Declined the RegEx fallback — it directly reverses an earlier deliberate
+decision (scratchpad is Gemini-only so messy real input like "Ayam sekoq potong kecik" or
+owner-tag detection doesn't silently degrade); offered a much narrower opt-in version instead
+if still wanted. Deferred native `responseSchema` — real reliability win, but Gemini's schema
+dialect (OpenAPI subset, `nullable: true` rather than JSON-Schema union types) is easy to get
+wrong without a way to test against it locally, and bundling an unverified structural change
+into the same deploy as a live rate-limit fix was judged too risky. Candidate for Phase 7.
+  - **`sw.js` NOT bumped this build** — only `/api/*` files changed, which the service worker
+already excludes from caching (see fetch handler). Per the established policy, a bump isn't
+required when app.js/index.html/manifest.json are untouched.
+- **Phase 7 (not started, candidates)**:
+  - Native `responseSchema` for `parse-list.js` (needs careful dialect verification first).
+  - Duplicate-match price overwrite (two receipt lines matching one list item) — no policy yet.
+  - "Undo"/send-back-to-To-Buy action for a mis-scanned Bought item.
+  - Custom shared-split ratios; cash-advance nudge for auto-created people.
 
 ## Stack
 - Vanilla HTML5, Tailwind CSS (CDN), Modular Vanilla JS
@@ -70,41 +72,63 @@ edit/delete are available on Bought rows).
 - Service Worker — stale-while-revalidate, manual skipWaiting update flow, `/api/*` excluded
 from caching
 - vercel.json — zero-cache headers + `functions.maxDuration` (parse-list: 30s, health: 15s,
-match-receipt: 30s)
-- Vercel Node Serverless Functions in `/api/`
+match-receipt: 30s) — unchanged this build, still valid since per-key attempt timeouts inside
+`_gemini.js` stay under these budgets regardless of how many keys are configured
+- Vercel Node.js Serverless Functions in `/api/` — all CommonJS (`require`/`module.exports`)
+as of this build
 
 ## File Structure
 ```
-/index.html            -> UPDATED this build. Progress-bar markup removed. To Buy/Bought tab
-                           toggle added above the list. Everything else unchanged.
-/app.js                 -> UPDATED this build. scanned flag, tab state + tabItems() +
-                           setActiveTab(), renderAll() tab-filtering + sort-to-bottom,
-                           renderItem() qty/price swap, handleReceiptFile() rename+scan+trolley
-                           + To-Buy-only candidates, showReceiptResult() dropdown-assign,
-                           global backdrop-click-close, State.progressPercent() removed.
-/api/parse-list.js      -> unchanged.
-/api/health.js          -> unchanged.
-/api/match-receipt.js   -> UPDATED this build. Each match now includes receiptName.
+/index.html            -> unchanged this build.
+/app.js                 -> unchanged this build (no client-side change was needed — rotation
+                           and tiering are entirely server-side).
+/api/_gemini.js         -> NEW this build. Shared multi-key rotation + retry transport, used
+                           by all three functions below. See Phase 6 notes above.
+/api/_lib.js            -> unchanged (safeJsonParse — not read/modified this build, only its
+                           require() call in parse-list.js was preserved as-is).
+/api/parse-list.js      -> UPDATED. Now gemini-3.1-flash-lite via callGemini(). Prompt/dedupe/
+                           owner-detection logic byte-identical to before.
+/api/health.js          -> UPDATED. Now gemini-3.1-flash-lite via callGemini(). Reports
+                           configured key count in its message; specific 429 message with a
+                           hint to add more keys.
+/api/match-receipt.js   -> UPDATED. Converted ESM -> CommonJS for consistency. Uses
+                           callGemini(), stays on gemini-3.5-flash. receiptName restored on
+                           matches.
 /manifest.json           -> unchanged
-/sw.js                   -> CACHE_NAME bumped v17 -> v18 this build (index.html + app.js
-                           changed).
+/sw.js                   -> unchanged this build (see Phase 6 notes — only /api/* changed).
 /vercel.json             -> unchanged.
 /icons/*.png             -> unchanged
 /CLAUDE_STATE.md         -> this file
 ```
 
+## Gemini API Key Rotation — SETUP INSTRUCTIONS
+1. Create additional Google Cloud projects (Google Cloud Console → New Project) — one per extra
+key you want real capacity from. Keys under the SAME project share one quota pool; this step
+is what actually matters, not just generating more key strings.
+2. In each project, enable the Gemini API and generate a key (Google AI Studio → Get API key →
+"Create API key in new project", or reuse a project you just made).
+3. In Vercel → Settings → Environment Variables, set:
+   `GEMINI_API_KEYS = key1,key2,key3` (comma-separated, no quotes needed)
+   The original `GEMINI_API_KEY` var can stay as a fallback but `GEMINI_API_KEYS` takes
+priority if both are set.
+4. Redeploy. `health.js`'s response will report the configured key count once it's working.
+
 ## Gemini Model String — IMPORTANT MAINTENANCE NOTE
 Google retires Gemini models on a rolling cadence
-(https://ai.google.dev/gemini-api/docs/deprecations). All three API files call
-`gemini-3.5-flash`. If any start 404ing, check the deprecations page and update the model
-string in all three.
+(https://ai.google.dev/gemini-api/docs/deprecations). As of this build: `match-receipt.js` on
+`gemini-3.5-flash`, `parse-list.js`/`health.js` on `gemini-3.1-flash-lite`. Flash-Lite naming
+has moved fast (3.1 series as of writing, GA since March 2026) — check the deprecations page
+before assuming a name is still current.
 
 ## Timeout Budget
 ```
 Vercel functions.maxDuration (vercel.json)   parse-list: 30s | health: 15s | match-receipt: 30s
-  └─ In-file AbortController (api/*.js)      parse-list: 22s | health: 10s | match-receipt: 22s
-       └─ Client fetch AbortController (app.js)  scratchpad: 25s | connection: 12s | receipt: 25s
+  └─ Total rotation budget (api/*.js -> _gemini.js)  parse-list: 22s | health: 10s | match-receipt: 22s
+       └─ Per-key attempt (budget / key count, floor 6s)
+            └─ Client fetch AbortController (app.js)  scratchpad: 25s | connection: 12s | receipt: 25s
 ```
+With only 1 key configured (today's default until GEMINI_API_KEYS is set), per-key attempt
+time equals the full budget — behavior is identical to before this build.
 
 ## Data Model
 ```
@@ -113,31 +137,31 @@ Item   = { id, name, qty: number|null, unit, price, category, inTrolley,
 Person = { id, name, isMe: boolean, cashAdvance: number }
 Adjustments = { discount: number, rounding: number }
 ```
-`scanned` is new this build (Phase 5) — defaults to `false` in `State.addItem()`, read as
-falsy for any item loaded from a pre-Phase-5 localStorage payload.
 Storage keys unchanged: `smarttroli_items_v4`, `smarttroli_people_v2`,
 `smarttroli_adjustments_v2`.
 
 ## Service Worker Update-Popup Policy — IMPORTANT
-The "New version available" toast only fires when `sw.js`'s own byte content changes,
-since that's what `reg.update()` diffs — it does NOT check `app.js`/`index.html` directly.
+The "New version available" toast only fires when `sw.js`'s own byte content changes.
 **Whenever a deploy changes `app.js`, `index.html`, or `manifest.json`, bump `CACHE_NAME` in
-`sw.js` in the same deploy.** Current: `v18`.
+`sw.js` in the same deploy.** Deploys touching only `/api/*` (like this one) don't need it.
+Last bumped: `v18` (Phase 5 build).
 
 ## Known Gaps / Next Steps
-1. Duplicate-match price overwrite (two receipt lines matching one list item) — no policy yet.
-2. No way to send a mis-scanned Bought item back to To Buy short of edit/delete.
-3. Gemini model string hardcoded in 3 files — consider `gemini-flash-latest` alias.
-4. Shared-item cost still splits evenly across all people — no custom ratio.
-5. Auto-created people (from salutation detection) start with `cashAdvance: 0` — no nudge yet.
-6. `appToast` and `updateToast` share screen position — low-priority stacking issue.
-7. FAB vertical offset is a fixed estimate — worth re-checking on-device for overlap.
+1. Confirm with the user whether their extra Gemini keys are on separate Google Cloud
+projects — rotation is a no-op otherwise. This is the single most important thing to verify
+before considering this fix "done" in practice.
+2. Native `responseSchema` for parse-list.js — deferred, needs dialect verification.
+3. Duplicate-match price overwrite — no policy yet.
+4. No way to send a mis-scanned Bought item back to To Buy short of edit/delete.
+5. Shared-item cost still splits evenly across all people — no custom ratio.
+6. Auto-created people (from salutation detection) start with `cashAdvance: 0` — no nudge yet.
+7. `appToast`/`updateToast` share screen position; FAB vertical offset on-device check.
 
 ## Setup Reminder
-`GEMINI_API_KEY` must be set in Vercel → Settings → Environment Variables. No new env vars
-needed.
+`GEMINI_API_KEY` (or the new `GEMINI_API_KEYS`) must be set in Vercel → Settings →
+Environment Variables.
 
 ## Next Prompt Should Confirm
-- Confirm To Buy/Bought tabs, dropdown-assign, and backdrop-close all work on-device after
-this deploy.
-- Pick a Phase 6 item from Known Gaps, or a fresh idea.
+- Whether 429s stop after this deploy, and whether the user has set up `GEMINI_API_KEYS` with
+keys from separate Google Cloud projects.
+- Pick a Phase 7 item from Known Gaps, or a fresh idea.

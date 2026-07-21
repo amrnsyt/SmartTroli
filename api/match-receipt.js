@@ -1,11 +1,16 @@
-export default async function handler(req, res) {
+// /api/match-receipt.js
+// Vercel Node.js Serverless Function — receipt-photo -> Gemini Vision -> fuzzy match against
+// the shopper's current To Buy list.
+
+const { callGemini } = require('./_gemini');
+
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  if (!process.env.GEMINI_API_KEYS && !process.env.GEMINI_API_KEY) {
     res.status(500).json({ error: 'Server is missing GEMINI_API_KEY' });
     return;
   }
@@ -19,7 +24,7 @@ export default async function handler(req, res) {
   // app.js sends a full data URL (e.g. "data:image/jpeg;base64,/9j/4AAQ...") straight from
   // canvas.toDataURL(). Gemini's inline_data.data field wants ONLY the raw base64 payload —
   // forwarding the "data:...;base64," prefix through is exactly what produced the
-  // "Base64 decoding failed" 400 the user hit. Strip it here.
+  // "Base64 decoding failed" 400 the user hit previously. Strip it here.
   const base64Data = image.includes(',') ? image.split(',')[1] : image;
 
   // app.js sends items as [{id, name}], not a flat name list — keep both id and name so the
@@ -39,31 +44,23 @@ ambiguous/abbreviated receipt names to a fuller name when confident — do not i
 aren't on the receipt):
 ${knownItems.map((i) => i.name).join(', ') || '(list is empty)'}`;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22000);
-
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt },
-                { inline_data: { mime_type: mimeType || 'image/jpeg', data: base64Data } }
-              ]
-            }
-          ],
-          generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
-        })
-      }
-    );
-
-    clearTimeout(timeout);
+    // Stays on gemini-3.5-flash (not the flash-lite tier used by parse-list.js/health.js) —
+    // this is a vision/OCR task and 3.5-flash is the confirmed-multimodal model; flash-lite's
+    // image support isn't established, so no reason to risk it on the receipt-scan path.
+    // callGemini() (api/_gemini.js) rotates across every key in GEMINI_API_KEYS on a 429/503
+    // before giving up, splitting this 22s budget across however many keys are configured.
+    const response = await callGemini('gemini-3.5-flash', {
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType || 'image/jpeg', data: base64Data } }
+          ]
+        }
+      ],
+      generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+    }, 22000);
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
@@ -93,8 +90,9 @@ ${knownItems.map((i) => i.name).join(', ') || '(list is empty)'}`;
 
     const normalizedKnown = knownItems.map((i) => ({ id: i.id, name: i.name, norm: normalize(i.name) }));
 
-    // matches -> [{itemId, price}], extras -> [{name, price}] — matches exactly what
-    // handleReceiptFile()/showReceiptResult() in app.js already expect.
+    // matches -> [{itemId, price, receiptName}], extras -> [{name, price}] — matches exactly
+    // what handleReceiptFile()/showReceiptResult() in app.js expect (receiptName drives the
+    // Phase 5 rename-to-receipt-name-on-match behavior).
     const matches = [];
     const extras = [];
 
@@ -122,11 +120,14 @@ ${knownItems.map((i) => i.name).join(', ') || '(list is empty)'}`;
 
     res.status(200).json({ matches, extras });
   } catch (err) {
-    clearTimeout(timeout);
     if (err.name === 'AbortError') {
       res.status(504).json({ error: 'Gemini took too long to read the receipt (timeout)' });
       return;
     }
+    if (err.name === 'NoKeyError') {
+      res.status(500).json({ error: err.message });
+      return;
+    }
     res.status(502).json({ error: 'Could not reach Gemini' });
   }
-}
+};

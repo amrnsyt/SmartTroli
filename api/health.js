@@ -1,38 +1,38 @@
 // /api/health.js
-// Lightweight GET endpoint the app pings to verify the Gemini API key is set
-// and Gemini is actually reachable — used by the "Check connection" dot in the UI.
+// Lightweight GET endpoint the app pings to verify a Gemini API key is set and Gemini is
+// actually reachable — used by the "Check connection" dot in the UI.
+
+const { callGemini, getApiKeys } = require('./_gemini');
 
 module.exports = async function handler(req, res) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const keys = getApiKeys();
 
-  if (!apiKey) {
-    res.status(200).json({ ok: false, message: 'GEMINI_API_KEY is not set on the server (check Vercel env vars).' });
+  if (keys.length === 0) {
+    res.status(200).json({ ok: false, message: 'No Gemini API key set on the server (set GEMINI_API_KEYS or GEMINI_API_KEY in Vercel env vars).' });
     return;
   }
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    // NOTE (Phase 2.11): thinkingLevel: 'low' avoids gemini-3.5-flash's default medium-thinking
-    // latency, which was slow enough on its own to make even this trivial ping time out.
-    // See the matching note in parse-list.js for the full explanation.
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: 'Reply with exactly: OK' }] }],
-          generationConfig: { maxOutputTokens: 32, thinkingConfig: { thinkingLevel: 'low' } }
-        }),
-        signal: controller.signal
-      }
-    );
-    clearTimeout(timeout);
+    // Same tiering as parse-list.js: this is a trivial text ping, so it runs on the cheaper
+    // gemini-3.1-flash-lite rather than gemini-3.5-flash — keeps it off the same quota pool
+    // as receipt-scanning vision calls. No thinkingConfig — Flash-Lite doesn't need it and may
+    // not support the field.
+    const response = await callGemini('gemini-3.1-flash-lite', {
+      contents: [{ parts: [{ text: 'Reply with exactly: OK' }] }],
+      generationConfig: { maxOutputTokens: 32 }
+    }, 10000);
 
     if (response.status === 400 || response.status === 403) {
       res.status(200).json({ ok: false, message: 'Gemini rejected the API key (invalid or restricted).' });
+      return;
+    }
+    if (response.status === 429) {
+      res.status(200).json({
+        ok: false,
+        message: keys.length > 1
+          ? `All ${keys.length} configured Gemini keys are rate-limited/quota-exhausted right now.`
+          : 'Gemini key is rate-limited or has hit its quota. Add more keys (GEMINI_API_KEYS) on separate Google Cloud projects to increase capacity.'
+      });
       return;
     }
     if (!response.ok) {
@@ -41,7 +41,10 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    res.status(200).json({ ok: true, message: 'Gemini connection OK.' });
+    res.status(200).json({
+      ok: true,
+      message: keys.length > 1 ? `Gemini connection OK (${keys.length} keys configured).` : 'Gemini connection OK.'
+    });
   } catch (err) {
     res.status(200).json({ ok: false, message: 'Could not reach Gemini from the server (network/timeout).' });
   }

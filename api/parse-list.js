@@ -1,8 +1,9 @@
 // /api/parse-list.js
 // Vercel Node.js Serverless Function — auto-detected, zero build step.
-// Reads GEMINI_API_KEY from a Vercel Environment Variable (never sent to the client).
+// Reads GEMINI_API_KEY / GEMINI_API_KEYS from Vercel Environment Variables (never sent to the client).
 
 const { safeJsonParse } = require('./_lib');
+const { callGemini } = require('./_gemini');
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -10,8 +11,7 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  if (!process.env.GEMINI_API_KEYS && !process.env.GEMINI_API_KEY) {
     res.status(500).json({ error: 'GEMINI_API_KEY is not set on the server.' });
     return;
   }
@@ -79,34 +79,27 @@ ${text}
 """`;
 
   try {
-    // NOTE (Phase 2.11): gemini-3.5-flash has "thinking" ON by default (thinkingLevel:
-    // "medium"), which was adding enough per-request reasoning latency to blow past our
-    // 22s in-file abort / 30s Vercel maxDuration and surface as a raw 504. thinkingLevel:
-    // "low" (Gemini 3 series can't fully disable thinking, unlike 2.5's thinkingBudget:0)
-    // keeps this fast enough for a JSON-extraction task. If 404s return, check
-    // https://ai.google.dev/gemini-api/docs/deprecations for the current GA flash model.
-    // Explicit timeout, kept comfortably under this function's vercel.json maxDuration (30s),
-    // so a slow Gemini response returns our own clean JSON error instead of Vercel's raw 504.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 22000);
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.2,
-            thinkingConfig: { thinkingLevel: 'low' }
-          }
-        }),
-        signal: controller.signal
+    // Model tiering (this build): scratchpad parsing is a text-only extraction task, so it
+    // runs on gemini-3.1-flash-lite instead of gemini-3.5-flash. Two reasons: (1) it's on a
+    // separate quota pool from the vision calls in match-receipt.js, so heavy receipt-scanning
+    // during a shopping trip doesn't also starve scratchpad parsing of requests, and (2) it's
+    // ~6x cheaper per Google's published pricing, which matters if this moves to a paid tier.
+    // If 404s ever return, check https://ai.google.dev/gemini-api/docs/deprecations for the
+    // current GA lite model — Flash-Lite naming has moved fast (3.1 series as of writing).
+    //
+    // NOTE: no thinkingConfig here — Flash-Lite is built for low latency already and may not
+    // support the thinkingConfig field at all (that was specifically a gemini-3.5-flash
+    // workaround, see the matching NOTE in health.js history / CLAUDE_STATE.md).
+    //
+    // callGemini() (api/_gemini.js) rotates across every key in GEMINI_API_KEYS on a 429/503
+    // before giving up, splitting this 22s budget across however many keys are configured.
+    const response = await callGemini('gemini-3.1-flash-lite', {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.2
       }
-    );
-    clearTimeout(timeout);
+    }, 22000);
 
     if (!response.ok) {
       const errText = await response.text();
@@ -122,9 +115,8 @@ ${text}
       return;
     }
 
-    // NOTE (Phase 2.14): thinkingLevel:'low' doesn't guarantee thought-free output — Gemini 3.x
-    // can leak reasoning text ahead of the real JSON even without a part flagged thought:true.
-    // safeJsonParse() (api/_lib.js) strips that leaked text instead of trusting `raw` is clean.
+    // safeJsonParse() (api/_lib.js) strips any leaked reasoning text ahead of the real JSON —
+    // unchanged from before, this file's own logic here didn't need to change.
     let items;
     try {
       items = safeJsonParse(raw);
@@ -152,7 +144,11 @@ ${text}
     res.status(200).json({ items: cleaned });
   } catch (err) {
     if (err.name === 'AbortError') {
-      res.status(504).json({ error: 'Gemini took too long to respond (server-side timeout after 22s).' });
+      res.status(504).json({ error: 'Gemini took too long to respond (server-side timeout).' });
+      return;
+    }
+    if (err.name === 'NoKeyError') {
+      res.status(500).json({ error: err.message });
       return;
     }
     res.status(500).json({ error: 'Server error calling Gemini.', detail: String(err) });

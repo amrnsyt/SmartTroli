@@ -24,10 +24,12 @@ const RETRYABLE_STATUS = new Set([429, 503]); // 429 = rate/quota limited, 503 =
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Calls Gemini's generateContent endpoint, rotating through every configured key on a 429/503
-// before giving up. Returns a normal fetch Response on success OR on any non-retryable
-// failure OR once every key is exhausted (so callers keep doing `if (!response.ok) {...}`
-// exactly like before) — only throws for network errors / a timeout on the final attempt,
-// same as a plain fetch() would.
+// before giving up, then doing up to two delayed retries on the final key for either status
+// (429 rate-limit bursts and 503 overload spikes both tend to clear within a few seconds).
+// Returns a normal fetch Response on success OR on any non-retryable failure OR once every
+// key/retry is exhausted (so callers keep doing `if (!response.ok) {...}` exactly like
+// before) — only throws for network errors / a timeout on the final attempt, same as a plain
+// fetch() would.
 //
 // `totalBudgetMs` is the WHOLE rotation's time budget, not per-attempt — it gets split across
 // however many keys are configured (floor 6s per attempt) so that even the worst case (every
@@ -76,12 +78,15 @@ async function callGemini(model, body, totalBudgetMs) {
 
       if (!isLastKey) continue; // retryable status, more keys to fall through to
 
-      // Out of keys. For 429 specifically (not 503), momentary bursts often clear within a
-      // second or two even on the same key — worth exactly one short delayed retry before
-      // truly giving up, rather than failing on the very first rate-limit hit.
-      if (response.status === 429) {
-        await sleep(1200);
-        return attempt(keys[i]);
+      // Out of keys. Both 429 (quota/rate limit) and 503 (Gemini's model momentarily
+      // overloaded — infrastructure-side, not key-specific, so rotating keys doesn't reliably
+      // help here) are worth a couple of short delayed retries on the same key before truly
+      // giving up: rate-limit bursts and overload spikes both tend to clear within a few
+      // seconds. Two attempts with a growing delay covers more ground than a single retry did.
+      for (const delayMs of [1200, 3000]) {
+        await sleep(delayMs);
+        const retryResponse = await attempt(keys[i]);
+        if (retryResponse.ok || !RETRYABLE_STATUS.has(retryResponse.status)) return retryResponse;
       }
       return response;
     } catch (err) {

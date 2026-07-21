@@ -882,14 +882,77 @@ el.receiptUploadInput.addEventListener('change', () => {
   if (file) handleReceiptFile(file);
 });
 
+// ---------- Phase 9 step 3 — local OCR fallback (Gemini outage resilience) ----------
+// If the Gemini-backed /api/match-receipt call fails for ANY reason (network error, timeout,
+// 429/503 exhausted after rotation+retries, any other server error), a full quota/outage day
+// used to dead-end in a bare error toast with nothing to show for the scan. This mirrors the
+// Shoppy-With-Wifey reference project's approach: fall back to OCR'ing the photo locally in
+// the browser (Tesseract.js, loaded from CDN only when actually needed — never on normal
+// happy-path scans) and regex-extracting {name, price} lines. There's no AI matching in this
+// path (Tesseract has no concept of the shopper's list), so everything it finds comes back as
+// "extras" — the existing dropdown-assign UI (Phase 5) is exactly the right tool for the user
+// to manually route each local-OCR'd line to a list item or add it fresh. Lower accuracy than
+// Gemini Vision, but "something to work with" beats "nothing" during an outage.
+let tesseractLoadPromise = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+  if (tesseractLoadPromise) return tesseractLoadPromise;
+  tesseractLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    script.onload = () => resolve();
+    script.onerror = () => { tesseractLoadPromise = null; reject(new Error('Could not load the local OCR library (offline or CDN blocked).')); };
+    document.head.appendChild(script);
+  });
+  return tesseractLoadPromise;
+}
+
+// Lines this receipt-common vocabulary matches are metadata (totals, tax, payment method,
+// loyalty points, card refs), not purchased items — skip them so they don't pollute extras.
+const RECEIPT_NOISE_RE = /total|subtotal|jumlah|tax\b|gst|sst|cash\b|tunai|change\b|baki|diskaun|discount|round|bulat|point|member|kad|visa|master|approved|ref\s*no|invoice|receipt\s*no|cashier|terminal/i;
+// A purchased line generally ends in a price like "12.50" or "12,50" (some receipt fonts/OCR
+// misreads use a comma). Everything before that trailing price, once cleaned of dot-leaders
+// and stray punctuation, is treated as the item name.
+const TRAILING_PRICE_RE = /(\d{1,4}[.,]\d{2})\s*$/;
+
+function parseReceiptTextLocally(rawText) {
+  const lines = String(rawText || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const extras = [];
+  for (const line of lines) {
+    if (RECEIPT_NOISE_RE.test(line)) continue;
+    const m = line.match(TRAILING_PRICE_RE);
+    if (!m) continue;
+    const price = parseFloat(m[1].replace(',', '.'));
+    if (isNaN(price) || price <= 0 || price > 2000) continue;
+    const name = line.slice(0, m.index).replace(/[-.\s]+$/, '').trim();
+    if (!name || name.length < 2) continue;
+    extras.push({ name, price });
+  }
+  return extras;
+}
+
+async function runLocalOcrFallback(dataUrl) {
+  await loadTesseract();
+  const { data } = await window.Tesseract.recognize(dataUrl, 'eng');
+  return parseReceiptTextLocally(data.text);
+}
+
 async function handleReceiptFile(file) {
   el.receiptScanningOverlay.classList.remove('hidden');
+  let dataUrl;
   try {
-    const dataUrl = await compressImageForUpload(file);
-    // Only offer items still on the To Buy list as match candidates — items a previous
-    // receipt scan already moved to Bought (multi-stop shopping) shouldn't be re-matchable.
-    const items = State.items.filter(i => !i.scanned).map(i => ({ id: i.id, name: i.name }));
+    dataUrl = await compressImageForUpload(file);
+  } catch (err) {
+    toast(err.message || 'Could not read the photo file.', 'error');
+    el.receiptScanningOverlay.classList.add('hidden');
+    return;
+  }
 
+  // Only offer items still on the To Buy list as match candidates — items a previous
+  // receipt scan already moved to Bought (multi-stop shopping) shouldn't be re-matchable.
+  const items = State.items.filter(i => !i.scanned).map(i => ({ id: i.id, name: i.name }));
+
+  try {
     const controller = new AbortController();
     // Phase 9 step 2: match-receipt.js now does TWO sequential Gemini calls server-side (OCR
     // then a separate text-only match call, ~13s budget each = up to ~26s worst case) instead
@@ -911,9 +974,6 @@ async function handleReceiptFile(file) {
     }
 
     if (!res.ok) {
-      if (res.status === 413) {
-        throw new Error('That photo is still too large to upload even after compression. Try a tighter crop of just the receipt.');
-      }
       let detail = '';
       try { detail = (await res.json()).error || ''; } catch (e) { /* ignore — Vercel's own error pages aren't JSON */ }
       throw new Error(detail ? `Gemini API error: ${detail}` : `Gemini API error (${res.status}).`);
@@ -937,14 +997,26 @@ async function handleReceiptFile(file) {
       });
     });
     renderAll();
-    showReceiptResult(matches, extras);
-  } catch (err) {
-    const msg = err.name === 'AbortError'
-      ? 'Gemini took too long to read the receipt (timeout). Try a clearer photo or better lighting.'
-      : (err.message || 'Could not read the receipt. Check your connection and try again.');
-    toast(msg, 'error');
-  } finally {
+    showReceiptResult(matches, extras, false);
     el.receiptScanningOverlay.classList.add('hidden');
+  } catch (err) {
+    // Gemini path failed outright (network/timeout/quota/server error) — try local OCR before
+    // giving up entirely. Skipped for the 413 case previously handled above only in spirit:
+    // local OCR runs client-side on the already-compressed dataUrl, so it works regardless of
+    // why the upload path failed.
+    toast('Gemini unavailable — trying local OCR fallback…', 'info');
+    try {
+      const extras = await runLocalOcrFallback(dataUrl);
+      renderAll();
+      showReceiptResult([], extras, true);
+    } catch (fallbackErr) {
+      const msg = err.name === 'AbortError'
+        ? 'Gemini took too long to read the receipt (timeout), and the local OCR fallback also failed. Try a clearer photo or better lighting.'
+        : (fallbackErr.message || 'Could not read the receipt via Gemini or locally. Check your connection and try again.');
+      toast(msg, 'error');
+    } finally {
+      el.receiptScanningOverlay.classList.add('hidden');
+    }
   }
 }
 
@@ -954,7 +1026,7 @@ async function handleReceiptFile(file) {
 // the user picks the right existing item themselves, or adds it fresh if it's genuinely new.
 // Matched items stay read-only rows — handleReceiptFile() already renamed/priced/moved them
 // to Bought before this renders.
-function showReceiptResult(matches, extras) {
+function showReceiptResult(matches, extras, usedFallback = false) {
   const matchRows = matches.map(m => {
     const item = State.items.find(i => i.id === m.itemId);
     const label = item ? item.name : (m.receiptName || m.itemId);
@@ -962,6 +1034,12 @@ function showReceiptResult(matches, extras) {
   }).join('');
 
   let bodyHtml = '';
+  // Phase 9 step 3: local Tesseract OCR ran instead of Gemini (outage/quota/network fallback)
+  // — it can't smart-match against the list at all, so every line lands in extras below. Flag
+  // this clearly so the user knows to double-check names/prices before assigning.
+  if (usedFallback) {
+    bodyHtml += `<p class="text-[11px] text-troli-orange bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2 mb-3">⚠️ Gemini was unreachable — used local OCR instead. Accuracy is lower and nothing was auto-matched; please check names/prices below before assigning.</p>`;
+  }
   if (matches.length) {
     bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">Matched &amp; moved to Bought (${matches.length})</p><ul class="space-y-1.5 mb-3">${matchRows}</ul>`;
   }

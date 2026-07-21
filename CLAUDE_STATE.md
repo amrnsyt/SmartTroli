@@ -58,9 +58,36 @@ total attempts (initial + 2 retries) when 503 persists throughout; recovers corr
 2nd retry succeeds. All previous Phase 6 tests re-verified passing too.
   - Key rotation (Phase 6) is still valuable for 429 specifically — kept as the first line of
 defense before the delayed-retry fallback, unchanged.
-- **Phase 9 (not started, candidates)**:
-  - Native `responseSchema` for parse-list.js — deferred from Phase 6, still pending.
-  - Duplicate-match price overwrite — no policy yet.
+- **Phase 9 (THIS BUILD — complete, step 1 of 3)**: analyzed a separate prior project
+(`Shoppy-With-Wifey`, React/TS/Vite/Firebase, different app entirely) at the user's request to
+understand why its receipt-scan + item-match felt more reliable. Findings:
+  1. Uses native `responseSchema` (typed, `required` fields) via the official `@google/genai`
+SDK, not just `responseMimeType: json` + prompt instructions — structurally constrains
+Gemini's output instead of hoping it's followed.
+  2. Splits OCR (vision) and item-matching (text-only) into two separate Gemini calls, and
+lets Gemini itself do the matching (including cross-language synonyms) with server-side
+`usedIds` dedup — rather than one combined vision call followed by hand-rolled JS fuzzy-string
+matching, which is what caused SmartTroli's duplicate-match bug and the need for a manual
+dropdown-assign UI as a workaround.
+  3. Falls back to local Tesseract OCR + regex automatically if the Gemini call fails, so a
+quota/outage day degrades gracefully instead of dead-ending in an error.
+  4. Runs on the older `gemini-2.5-flash` — likely less-contended free-tier quota right now
+simply because fewer people are on that generation.
+  - Agreed to port these in priority order, one at a time, starting with #1.
+  - **Step 1/3 (this build): native `responseSchema` added to `parse-list.js`.** Schema
+mirrors the existing `{name, qty, unit, price, category, ownerName}` item shape exactly, with
+`qty`/`ownerName` marked `nullable: true` (both are legitimately null in normal operation — no
+quantity stated, or no owner detected). `safeJsonParse()`'s leaked-reasoning-text stripping
+was deliberately left in place as a defensive fallback rather than removed, since schema mode
+should make it unnecessary but that can't be verified without the live environment.
+  - **Steps 2/3 and 3/3 not yet started** (split match-receipt.js into OCR + separate
+text-only match call with dedup; local-fallback resilience for a Gemini outage) — next up,
+one at a time per the user's request.
+- **Phase 10 (not started, candidates)**:
+  - Phase 9 steps 2 and 3 (see above).
+  - Duplicate-match price overwrite in the CURRENT match-receipt.js — likely moot once step 2
+lands (server-side dedup replaces the JS substring matcher entirely), but flagging in case
+step 2 gets deprioritized.
   - "Undo"/send-back-to-To-Buy action for a mis-scanned Bought item.
   - Custom shared-split ratios; cash-advance nudge for auto-created people.
 
@@ -79,12 +106,11 @@ match-receipt: 30s) — unchanged, still valid regardless of model/key-count cha
 /app.js                 -> unchanged this build.
 /api/_gemini.js         -> unchanged this build (built in Phase 6).
 /api/_lib.js            -> unchanged, not modified any build so far.
-/api/parse-list.js      -> unchanged this build (already on gemini-3.1-flash-lite since
-                           Phase 6).
-/api/health.js           -> unchanged this build (already on gemini-3.1-flash-lite since
-                           Phase 6).
-/api/match-receipt.js   -> UPDATED this build. gemini-3.5-flash -> gemini-3.1-flash-lite (see
-                           Phase 7 above — this was the actual fix for the persisting 429).
+/api/parse-list.js      -> UPDATED this build. Native responseSchema added (see Phase 9). Model
+                           unchanged (gemini-3.1-flash-lite, since Phase 7).
+/api/health.js           -> unchanged this build.
+/api/match-receipt.js   -> unchanged this build (Phase 9 step 2 will restructure this file
+                           next — not started yet).
 /manifest.json           -> unchanged
 /sw.js                   -> unchanged (only /api/* touched, service worker doesn't cache it).
 /vercel.json             -> unchanged.
@@ -137,9 +163,10 @@ Bump `CACHE_NAME` in `sw.js` whenever `app.js`/`index.html`/`manifest.json` chan
 for `/api/*`-only deploys (like this one). Last bumped: `v18` (Phase 5 build).
 
 ## Known Gaps / Next Steps
-1. Confirm 503 stops recurring (or at least resolves via retry) after this deploy.
-2. Native `responseSchema` for parse-list.js — deferred, needs dialect verification.
-3. Duplicate-match price overwrite — no policy yet.
+1. Phase 9 step 2: split match-receipt.js into OCR-only + separate text-only match call
+(server-side dedup, cross-language matching) — this is the next thing to build.
+2. Phase 9 step 3: local-fallback resilience for a Gemini outage during receipt scanning.
+3. Duplicate-match price overwrite — likely resolved once step 2 lands.
 4. No way to send a mis-scanned Bought item back to To Buy short of edit/delete.
 5. Shared-item cost still splits evenly across all people — no custom ratio.
 6. Auto-created people (from salutation detection) start with `cashAdvance: 0` — no nudge yet.
@@ -150,5 +177,4 @@ for `/api/*`-only deploys (like this one). Last bumped: `v18` (Phase 5 build).
 Variables.
 
 ## Next Prompt Should Confirm
-- Does the 503 stop after this deploy (or resolve via the widened retry)?
-- Any new error codes seen, or is the app now running smoothly end-to-end?
+- Ready to build Phase 9 step 2 (split match-receipt.js + separate matching call)?

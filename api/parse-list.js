@@ -5,6 +5,29 @@
 const { safeJsonParse } = require('./_lib');
 const { callGemini } = require('./_gemini');
 
+// Native structured-output schema (Gemini REST API's OpenAPI-subset dialect — uppercase `type`
+// strings, `nullable: true` for optional fields). Constrains Gemini's output to exactly this
+// shape at generation time, instead of relying on the prompt's plain-English JSON description
+// alone. safeJsonParse() (below) is kept as a defensive fallback rather than removed — schema
+// mode should eliminate the leaked-reasoning-text problem it was built for, but there's no way
+// to verify that against the live environment from here, so no reason to drop a working safety
+// net over an assumption.
+const responseSchema = {
+  type: 'ARRAY',
+  items: {
+    type: 'OBJECT',
+    properties: {
+      name: { type: 'STRING' },
+      qty: { type: 'NUMBER', nullable: true },
+      unit: { type: 'STRING' },
+      price: { type: 'NUMBER' },
+      category: { type: 'STRING' },
+      ownerName: { type: 'STRING', nullable: true }
+    },
+    required: ['name', 'qty', 'unit', 'price', 'category', 'ownerName']
+  }
+};
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -97,6 +120,7 @@ ${text}
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: 'application/json',
+        responseSchema,
         temperature: 0.2
       }
     }, 22000);

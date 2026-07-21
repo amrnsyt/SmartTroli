@@ -16,6 +16,6 @@
   "functions": {
     "api/parse-list.js": { "maxDuration": 30 },
     "api/health.js": { "maxDuration": 15 },
-    "api/match-receipt.js": { "maxDuration": 30 }
+    "api/match-receipt.js": { "maxDuration": 45 }
   }
 }

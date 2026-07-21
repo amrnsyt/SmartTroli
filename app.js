@@ -891,7 +891,11 @@ async function handleReceiptFile(file) {
     const items = State.items.filter(i => !i.scanned).map(i => ({ id: i.id, name: i.name }));
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
+    // Phase 9 step 2: match-receipt.js now does TWO sequential Gemini calls server-side (OCR
+    // then a separate text-only match call, ~13s budget each = up to ~26s worst case) instead
+    // of one combined call — this client timeout was bumped from 25s to 40s to match, and
+    // vercel.json's maxDuration for this function was bumped 30s -> 45s alongside it.
+    const timeout = setTimeout(() => controller.abort(), 40000);
     let res;
     try {
       res = await fetch('/api/match-receipt', {

@@ -184,7 +184,10 @@ const el = {
   receiptSourceCameraBtn: document.getElementById('receiptSourceCameraBtn'),
   receiptSourceGalleryBtn: document.getElementById('receiptSourceGalleryBtn'),
   receiptSourceCancelBtn: document.getElementById('receiptSourceCancelBtn'),
+  receiptSourceLocalToggle: document.getElementById('receiptSourceLocalToggle'),
+  receiptSourceLocalToggleDot: document.getElementById('receiptSourceLocalToggleDot'),
   receiptScanningOverlay: document.getElementById('receiptScanningOverlay'),
+  receiptScanningLabel: document.getElementById('receiptScanningLabel'),
   receiptModal: document.getElementById('receiptModal'),
   receiptBody: document.getElementById('receiptBody'),
   receiptCloseBtn: document.getElementById('receiptCloseBtn'),
@@ -900,12 +903,29 @@ function compressImageForUpload(file, maxDim = 1600, startQuality = 0.72) {
   });
 }
 
+// Phase 10 step 3 — "Skip Gemini (use local OCR)" toggle in the receipt source sheet.
+// Sticky across scans (not auto-reset) so a user who knows they're offline/out of quota for
+// this whole shopping trip doesn't have to re-toggle it every single scan.
+let forceLocalOcr = false;
+function setLocalOcrToggle(active) {
+  forceLocalOcr = active;
+  el.receiptSourceLocalToggle.dataset.active = active;
+  el.receiptSourceLocalToggleDot.className = active
+    ? 'inline-block w-2 h-2 rounded-full bg-troli-green dark:bg-troli-greenlight shrink-0'
+    : 'inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark shrink-0';
+  el.receiptSourceLocalToggle.className = active
+    ? 'w-full flex items-center justify-between gap-3 text-xs rounded-xl px-4 py-2.5 border border-troli-green dark:border-troli-greenlight active:scale-95 transition-transform mt-3 bg-troli-green/10'
+    : 'w-full flex items-center justify-between gap-3 text-xs rounded-xl px-4 py-2.5 border border-troli-rail dark:border-troli-raildark active:scale-95 transition-transform mt-3';
+}
+el.receiptSourceLocalToggle.addEventListener('click', () => setLocalOcrToggle(!forceLocalOcr));
+
 // Single "📸 Receipt" button opens a small action sheet so the header doesn't need two
 // separate always-visible buttons for camera vs gallery — that's what was making the action
 // row look cluttered.
 el.scanReceiptBtn.addEventListener('click', () => {
-  if (!navigator.onLine) {
-    toast('No internet connection — receipt scanning needs Gemini.', 'error');
+  if (!navigator.onLine && !forceLocalOcr) {
+    toast('No internet connection — turn on "Skip Gemini" below to use local OCR instead.', 'error');
+    el.receiptSourceSheet.classList.remove('hidden');
     return;
   }
   el.receiptSourceSheet.classList.remove('hidden');
@@ -941,6 +961,8 @@ el.receiptUploadInput.addEventListener('change', () => {
 // "extras" — the existing dropdown-assign UI (Phase 5) is exactly the right tool for the user
 // to manually route each local-OCR'd line to a list item or add it fresh. Lower accuracy than
 // Gemini Vision, but "something to work with" beats "nothing" during an outage.
+// Phase 10 step 3 also reuses this same path as a MANUAL, user-chosen entry point (not just an
+// automatic failure fallback) via the "Skip Gemini" toggle above.
 let tesseractLoadPromise = null;
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve();
@@ -993,6 +1015,24 @@ async function handleReceiptFile(file) {
   } catch (err) {
     toast(err.message || 'Could not read the photo file.', 'error');
     el.receiptScanningOverlay.classList.add('hidden');
+    return;
+  }
+
+  // Phase 10 step 3 — user explicitly asked to skip Gemini entirely for this scan. Go straight
+  // to local OCR, no Gemini call/timeout wait at all, same result shape as the automatic
+  // failure-triggered fallback below (usedFallback=true banner).
+  if (forceLocalOcr) {
+    el.receiptScanningLabel.textContent = 'Reading receipt locally (OCR)…';
+    try {
+      const extras = await runLocalOcrFallback(dataUrl);
+      renderAll();
+      showReceiptResult([], extras, true);
+    } catch (fallbackErr) {
+      toast(fallbackErr.message || 'Local OCR failed. Check your connection to load the OCR library, or try again.', 'error');
+    } finally {
+      el.receiptScanningOverlay.classList.add('hidden');
+      el.receiptScanningLabel.textContent = 'Reading your receipt…';
+    }
     return;
   }
 
@@ -1082,11 +1122,12 @@ function showReceiptResult(matches, extras, usedFallback = false) {
   }).join('');
 
   let bodyHtml = '';
-  // Phase 9 step 3: local Tesseract OCR ran instead of Gemini (outage/quota/network fallback)
-  // — it can't smart-match against the list at all, so every line lands in extras below. Flag
-  // this clearly so the user knows to double-check names/prices before assigning.
+  // Phase 9 step 3 / Phase 10 step 3: local Tesseract OCR ran instead of Gemini (outage/quota/
+  // network fallback, OR the user manually chose "Skip Gemini") — it can't smart-match against
+  // the list at all, so every line lands in extras below. Flag this clearly so the user knows
+  // to double-check names/prices before assigning.
   if (usedFallback) {
-    bodyHtml += `<p class="text-[11px] text-troli-orange bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2 mb-3">⚠️ Gemini was unreachable — used local OCR instead. Accuracy is lower and nothing was auto-matched; please check names/prices below before assigning.</p>`;
+    bodyHtml += `<p class="text-[11px] text-troli-orange bg-troli-orange/10 border border-troli-orange/30 rounded-xl px-3 py-2 mb-3">⚠️ Used local OCR instead of Gemini. Accuracy is lower and nothing was auto-matched; please check names/prices below before assigning.</p>`;
   }
   if (matches.length) {
     bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">Matched &amp; moved to Bought (${matches.length})</p><ul class="space-y-1.5 mb-3">${matchRows}</ul>`;
@@ -1095,7 +1136,7 @@ function showReceiptResult(matches, extras, usedFallback = false) {
     bodyHtml += `<p class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark mb-1">On receipt but not recognized (${extras.length})</p><p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-2">Assign each to an item on your To Buy list, or add it as new.</p><ul id="receiptExtrasList" class="space-y-1.5"></ul>`;
   }
   if (!matches.length && !extras.length) {
-    bodyHtml = `<p class="text-sm text-troli-sub dark:text-troli-subdark">Gemini couldn't read any line items off that photo — try a clearer, well-lit shot.</p>`;
+    bodyHtml = `<p class="text-sm text-troli-sub dark:text-troli-subdark">${usedFallback ? 'Local OCR' : 'Gemini'} couldn't read any line items off that photo — try a clearer, well-lit shot.</p>`;
   }
 
   el.receiptBody.innerHTML = bodyHtml;
@@ -1175,3 +1216,4 @@ State.load();
 setActiveTab('tobuy');
 checkGeminiConnection(true);
 setAddMode('structured');
+setLocalOcrToggle(false);

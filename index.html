@@ -229,7 +229,8 @@
   </div>
 
   <!-- Receipt Source Sheet — one "📸 Receipt" button now opens this instead of two separate
-       header buttons, which is what was making the action row look cluttered. -->
+       header buttons, which is what was making the action row look cluttered. Phase 10 step 3
+       adds a "Skip Gemini" toggle for users who already know they're offline/out of quota. -->
   <div id="receiptSourceSheet" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
     <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
       <h3 class="font-display text-lg mb-3">Scan Receipt</h3>
@@ -237,15 +238,21 @@
         <button id="receiptSourceCameraBtn" type="button" class="w-full flex items-center gap-3 text-sm rounded-xl px-4 py-3 border border-troli-rail dark:border-troli-raildark active:scale-95 transition-transform"><span>📷</span><span>Take Photo</span></button>
         <button id="receiptSourceGalleryBtn" type="button" class="w-full flex items-center gap-3 text-sm rounded-xl px-4 py-3 border border-troli-rail dark:border-troli-raildark active:scale-95 transition-transform"><span>🖼️</span><span>Upload from Gallery</span></button>
       </div>
+      <button id="receiptSourceLocalToggle" type="button" data-active="false"
+        class="w-full flex items-center justify-between gap-3 text-xs rounded-xl px-4 py-2.5 border border-troli-rail dark:border-troli-raildark active:scale-95 transition-transform mt-3">
+        <span>⚡ Skip Gemini (use local OCR)</span>
+        <span id="receiptSourceLocalToggleDot" class="inline-block w-2 h-2 rounded-full bg-troli-sub dark:bg-troli-subdark shrink-0"></span>
+      </button>
+      <p class="text-[10px] text-troli-sub dark:text-troli-subdark mt-1.5">On = read the photo on-device (Tesseract), no waiting on Gemini first. Lower accuracy, nothing auto-matched. Off = normal Gemini scan (falls back automatically if it fails anyway).</p>
       <button id="receiptSourceCancelBtn" type="button" class="w-full mt-3 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
     </div>
   </div>
 
-  <!-- Receipt Scanning Overlay (shown while Gemini Vision reads the photo) -->
+  <!-- Receipt Scanning Overlay (shown while Gemini Vision / local OCR reads the photo) -->
   <div id="receiptScanningOverlay" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
     <div class="bg-troli-card dark:bg-troli-carddark rounded-2xl px-6 py-5 flex items-center gap-3 shadow-lg">
       <div class="w-5 h-5 rounded-full border-2 border-troli-green dark:border-troli-greenlight border-t-transparent animate-spin"></div>
-      <span class="text-sm">Reading your receipt…</span>
+      <span id="receiptScanningLabel" class="text-sm">Reading your receipt…</span>
     </div>
   </div>
 

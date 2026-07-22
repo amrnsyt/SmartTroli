@@ -230,6 +230,11 @@ const el = {
   editPayToggle: document.getElementById('editPayToggle'),
   editSaveBtn: document.getElementById('editSaveBtn'),
   editCancelBtn: document.getElementById('editCancelBtn'),
+  markBoughtModal: document.getElementById('markBoughtModal'),
+  markBoughtTitle: document.getElementById('markBoughtTitle'),
+  markBoughtPrice: document.getElementById('markBoughtPrice'),
+  markBoughtSaveBtn: document.getElementById('markBoughtSaveBtn'),
+  markBoughtCancelBtn: document.getElementById('markBoughtCancelBtn'),
   adjustBtn: document.getElementById('adjustBtn'),
   adjustModal: document.getElementById('adjustModal'),
   adjustDiscount: document.getElementById('adjustDiscount'),
@@ -335,7 +340,9 @@ function renderItem(item) {
 
   li.innerHTML = `
     <div class="editRow absolute inset-0 flex items-center justify-end gap-2 px-3 bg-troli-orange/90">
-      ${item.scanned ? '<button class="undoBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">↩ Undo</button>' : ''}
+      ${item.scanned
+        ? '<button class="undoBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">↩ Undo</button>'
+        : '<button class="markBoughtBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">✓ Bought</button>'}
       <button class="editBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/20 rounded-full">Edit</button>
       <button class="delBtn text-white text-xs font-semibold px-3 py-1.5 bg-black/30 rounded-full">Delete</button>
     </div>
@@ -365,6 +372,8 @@ function renderItem(item) {
     renderAll();
     toast(`${item.name} sent back to To Buy`, 'info');
   });
+  const markBoughtBtn = li.querySelector('.markBoughtBtn');
+  if (markBoughtBtn) markBoughtBtn.addEventListener('click', () => openMarkBoughtModal(item));
 
   // Swipe gestures
   let startX = 0, currentX = 0, dragging = false;
@@ -424,6 +433,37 @@ el.editSaveBtn.addEventListener('click', () => {
   editingId = null;
   el.editModal.classList.add('hidden');
   renderAll();
+});
+
+// ---------- Phase 11 — manual "Mark as Bought" ----------
+// Not every purchase produces a receipt (pasar malam / wet-market stalls, informal cash buys,
+// etc). Previously the ONLY way an item moved from To Buy to Bought was via a receipt scan
+// match. This lets the user manually confirm a To Buy item was bought and record its price,
+// without needing a receipt at all.
+let markBoughtId = null;
+
+function openMarkBoughtModal(item) {
+  markBoughtId = item.id;
+  el.markBoughtTitle.textContent = `Mark "${item.name}" as Bought`;
+  el.markBoughtPrice.value = item.price > 0 ? item.price : '';
+  el.markBoughtModal.classList.remove('hidden');
+  setTimeout(() => el.markBoughtPrice.focus(), 50);
+}
+
+el.markBoughtCancelBtn.addEventListener('click', () => {
+  markBoughtId = null;
+  el.markBoughtModal.classList.add('hidden');
+});
+
+el.markBoughtSaveBtn.addEventListener('click', () => {
+  if (!markBoughtId) return;
+  const price = parseFloat(el.markBoughtPrice.value) || 0;
+  const item = State.items.find(i => i.id === markBoughtId);
+  State.updateItem(markBoughtId, { price, scanned: true, inTrolley: true });
+  markBoughtId = null;
+  el.markBoughtModal.classList.add('hidden');
+  renderAll();
+  toast(item ? `${item.name} marked as Bought` : 'Marked as Bought', 'success');
 });
 
 const CATEGORY_ORDER = ['Sayur-sayuran', 'Buah-buahan', 'Daging & Ayam', 'Ikan & Makanan Laut', 'Tenusu', 'Perencah & Sos', 'Lain-lain'];
@@ -830,8 +870,8 @@ function renderScratchPreview(items) {
         data-role="preview-qty" data-idx="${idx}"
         class="w-16 shrink-0 bg-troli-card dark:bg-troli-carddark rounded-lg px-2 py-1.5 text-sm text-center border border-troli-rail dark:border-troli-raildark outline-none focus:border-troli-green dark:focus:border-troli-greenlight" />
       <input type="text" placeholder="unit" value="${escapeHtml(p.unit || '')}"
-        data-role="preview-unit" data-idx="${idx}"
-        class="w-14 shrink-0 bg-troli-card dark:bg-troli-carddark rounded-lg px-1.5 py-1.5 text-[11px] text-center border border-troli-rail dark:border-troli-raildark outline-none" />
+        data-role="preview-unit" data-idx="${idx}" disabled title="Unit is set by Gemini and locked here — edit it later from Edit if needed."
+        class="w-14 shrink-0 bg-troli-card dark:bg-troli-carddark rounded-lg px-1.5 py-1.5 text-[11px] text-center border border-troli-rail dark:border-troli-raildark outline-none opacity-50 cursor-not-allowed" />
     </div>
   `).join('');
   el.scratchPreviewCount.textContent = `${pendingParsed.length} item${pendingParsed.length === 1 ? '' : 's'} detected`;
@@ -851,15 +891,13 @@ el.scratchBackBtn.addEventListener('click', resetScratchPreview);
 el.scratchConfirmBtn.addEventListener('click', () => {
   if (!pendingParsed || pendingParsed.length === 0) return;
 
-  // Pull whatever the user last typed into each qty/unit box — this is the whole point of the
-  // review step, so read straight from the inputs rather than trusting Gemini's original values.
+  // Pull whatever the user last typed into each qty box — this is the whole point of the
+  // review step, so read straight from the inputs rather than trusting Gemini's original
+  // values. The unit input is disabled (Phase 11) so pendingParsed[idx].unit is left exactly
+  // as Gemini produced it — intentional, no read-back needed for a disabled field.
   el.scratchPreviewList.querySelectorAll('[data-role="preview-qty"]').forEach(input => {
     const idx = parseInt(input.dataset.idx, 10);
     if (pendingParsed[idx]) pendingParsed[idx].qty = input.value === '' ? null : parseFloat(input.value);
-  });
-  el.scratchPreviewList.querySelectorAll('[data-role="preview-unit"]').forEach(input => {
-    const idx = parseInt(input.dataset.idx, 10);
-    if (pendingParsed[idx]) pendingParsed[idx].unit = input.value;
   });
 
   const items = pendingParsed;
@@ -1081,7 +1119,10 @@ async function handleReceiptFile(file) {
 
   // Only offer items still on the To Buy list as match candidates — items a previous
   // receipt scan already moved to Bought (multi-stop shopping) shouldn't be re-matchable.
-  const items = State.items.filter(i => !i.scanned).map(i => ({ id: i.id, name: i.name }));
+  // Phase 11: qty is sent too, so match-receipt.js can allow more than one receipt line to
+  // match the SAME list item when its merged qty > 1 (e.g. "Ayam" qty 2, combined from two
+  // people's requests, legitimately bought as 2 separate weighed receipt lines).
+  const items = State.items.filter(i => !i.scanned).map(i => ({ id: i.id, name: i.name, qty: i.qty }));
 
   try {
     const controller = new AbortController();
@@ -1114,19 +1155,47 @@ async function handleReceiptFile(file) {
     const matches = Array.isArray(data.matches) ? data.matches : [];
     const extras = Array.isArray(data.extras) ? data.extras : [];
 
-    // A match means the receipt confirms this list item was actually bought: rename it to the
-    // printed receipt name (the receipt is ground truth — the scratchpad/manual name was only
-    // ever a best guess), apply the scanned price, and move it to Bought (scanned + inTrolley
-    // both flip true together, since a receipt line is proof of purchase, not just a price).
-    matches.forEach(m => {
-      const existing = State.items.find(i => i.id === m.itemId);
-      State.updateItem(m.itemId, {
-        name: m.receiptName || (existing ? existing.name : undefined),
-        price: m.price,
-        scanned: true,
-        inTrolley: true
+    // Phase 11 — GROUP matches by itemId instead of assuming one-to-one. A list item whose
+    // qty was merged from multiple people's requests (e.g. "Ayam" qty 2) can legitimately be
+    // fulfilled by MORE THAN ONE receipt line (e.g. 2 separate weighed chicken purchases).
+    // match-receipt.js now allows this server-side (capped at the item's own qty), so the
+    // client has to handle >1 match per itemId instead of silently only ever applying the
+    // last one via a plain forEach + updateItem overwrite.
+    const matchGroups = {};
+    matches.forEach(m => { (matchGroups[m.itemId] = matchGroups[m.itemId] || []).push(m); });
+
+    Object.keys(matchGroups).forEach((itemId) => {
+      const group = matchGroups[itemId];
+      const original = State.items.find(i => i.id === itemId);
+      if (!original) return;
+
+      const neededQty = (original.qty === null || original.qty === undefined) ? 1 : Math.max(1, Math.floor(original.qty));
+      const snapshot = { owner: original.owner, category: original.category, unit: original.unit, paymentMode: original.paymentMode, name: original.name };
+
+      group.forEach((m, idx) => {
+        if (idx === 0) {
+          // First receipt line reuses the original record — one confirmed unit bought. The
+          // receipt is ground truth for name/price; qty collapses to 1 since this record now
+          // represents exactly one purchased unit.
+          State.updateItem(itemId, { name: m.receiptName || snapshot.name, price: m.price, qty: 1, scanned: true, inTrolley: true });
+        } else {
+          // Additional receipt line(s) for the SAME list item — clone a new Bought record
+          // instead of overwriting/losing the earlier match.
+          State.addItem(m.receiptName || snapshot.name, m.price, snapshot.owner, snapshot.paymentMode, 1, snapshot.unit, snapshot.category, true);
+          const cloned = State.items[State.items.length - 1];
+          State.updateItem(cloned.id, { inTrolley: true });
+        }
       });
+
+      // Any quantity still not accounted for by a receipt line stays on the To Buy list as
+      // its own remaining-qty record, instead of silently vanishing (e.g. list said qty 2,
+      // receipt only had 1 matching line so far — the 2nd is still owed).
+      const leftover = neededQty - group.length;
+      if (leftover > 0) {
+        State.addItem(snapshot.name, 0, snapshot.owner, snapshot.paymentMode, leftover, snapshot.unit, snapshot.category, false);
+      }
     });
+
     renderAll();
     showReceiptResult(matches, extras, false);
     el.receiptScanningOverlay.classList.add('hidden');
@@ -1245,12 +1314,13 @@ el.receiptCloseBtn.addEventListener('click', () => el.receiptModal.classList.add
 function closeAnyModal(modalEl) {
   modalEl.classList.add('hidden');
   if (modalEl === el.editModal) editingId = null;
+  if (modalEl === el.markBoughtModal) markBoughtId = null;
   if (modalEl === el.personModal) {
     editingPersonId = null;
     if (cashNudgeQueue.length) processCashNudgeQueue(); // backdrop-dismissing a nudge still advances the queue
   }
 }
-[el.personModal, el.settleModal, el.editModal, el.adjustModal, el.receiptModal, el.receiptSourceSheet].forEach((modalEl) => {
+[el.personModal, el.settleModal, el.editModal, el.adjustModal, el.receiptModal, el.receiptSourceSheet, el.markBoughtModal].forEach((modalEl) => {
   modalEl.addEventListener('click', (e) => { if (e.target === modalEl) closeAnyModal(modalEl); });
 });
 

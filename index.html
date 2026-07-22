@@ -188,8 +188,10 @@
           <p class="text-[10px] text-troli-sub dark:text-troli-subdark mt-1">Requires internet — Gemini detects owner tags like "Abah :", sorts by category, and combines duplicates across lists. No offline mode for this feature.</p>
         </div>
 
-        <!-- Review step — Gemini's extracted qty (and unit) is editable here before anything is
-             added to the actual list, since Gemini sometimes gets a quantity wrong or misses one. -->
+        <!-- Review step — Gemini's extracted qty is editable here before anything is
+             added to the actual list (unit is locked/read-only here — Phase 11 — since
+             Gemini's detected unit rarely needs a correction at this stage; edit it later via
+             the item's Edit action if needed). -->
         <div id="scratchPreviewWrap" class="hidden">
           <div class="flex items-center justify-between mb-2">
             <h4 class="text-xs font-semibold text-troli-sub dark:text-troli-subdark uppercase tracking-wider">Review qty before adding</h4>
@@ -288,6 +290,22 @@
       <div class="flex gap-2">
         <button id="editCancelBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
         <button id="editSaveBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 troli-btn-primary font-semibold">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mark Bought Modal — Phase 11: manually confirm a To Buy item was purchased when no
+       receipt is available (e.g. pasar malam / no-receipt stalls) instead of requiring a
+       receipt scan to ever move an item to Bought. -->
+  <div id="markBoughtModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
+      <h3 id="markBoughtTitle" class="font-display text-lg mb-1">Mark as Bought</h3>
+      <p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-3">No receipt? Enter the price you paid to move this to Bought.</p>
+      <input id="markBoughtPrice" type="number" step="0.01" min="0" placeholder="Price paid (RM)" inputmode="decimal"
+        class="w-full mb-4 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <div class="flex gap-2">
+        <button id="markBoughtCancelBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
+        <button id="markBoughtSaveBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 troli-btn-primary font-semibold">Confirm Bought</button>
       </div>
     </div>
   </div>

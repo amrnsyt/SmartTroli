@@ -1,14 +1,20 @@
 // /api/match-receipt.js
-// Vercel Node.js Serverless Function — Phase 9 step 2.
+// Vercel Node.js Serverless Function — Phase 9 step 2, upgraded Phase 11.
 // Split into TWO Gemini calls instead of one combined vision+match call:
 //   1) OCR-only (vision): read the receipt photo, extract {name, price} lines. This call
 //      knows nothing about the shopper's list.
 //   2) Match-only (text): given the OCR'd lines + the shopper's current To Buy list, Gemini
 //      itself decides which receipt line maps to which list item (handles synonyms/abbrevs/
-//      cross-language, e.g. "AYAM SEGAR/KG" -> "Ayam"), enforcing one-match-per-list-item
+//      cross-language, e.g. "AYAM SEGAR/KG" -> "Ayam"), enforcing a per-item quantity cap
 //      itself via the prompt, with a server-side dedup pass as a safety net.
-// This replaces the old single vision call + hand-rolled JS substring fuzzy matcher, which
-// was the source of the duplicate-match bug (see CLAUDE_STATE.md Phase 9).
+//
+// Phase 11: a list item can be a MERGED entry (qty > 1) combining requests from more than one
+// person (e.g. "Ayam" qty 2 — one request from the main list, one from "Abah :"). Such an item
+// can legitimately be fulfilled by MORE THAN ONE receipt line (e.g. two separately-weighed
+// chicken purchases). The old logic capped every list item at exactly ONE matching receipt
+// line, which meant the 2nd genuine purchase got shoved into "extras" as unrecognized instead
+// of being recognized as the same item's 2nd unit. The cap is now the item's own qty (floored,
+// minimum 1) instead of a flat 1-per-item limit.
 
 const { callGemini } = require('./_gemini');
 const { safeJsonParse } = require('./_lib');
@@ -58,7 +64,8 @@ module.exports = async function handler(req, res) {
   // app.js sends a full data URL — Gemini's inline_data.data wants only the raw base64 payload.
   const base64Data = image.includes(',') ? image.split(',')[1] : image;
 
-  // app.js sends [{id, name}] — keep both so the match result can carry itemId back to State.
+  // app.js sends [{id, name, qty}] — qty (Phase 11) drives how many receipt lines are allowed
+  // to match the same list item.
   const knownItems = Array.isArray(items) ? items.filter((i) => i && i.id && i.name) : [];
 
   try {
@@ -122,17 +129,22 @@ The shopper's list may be in English, Malay, or local dialect, and may be abbrev
 receipt (e.g. "AYAM SEGAR/KG" on a receipt could mean "Ayam" on the list). Use your knowledge of
 Malaysian grocery naming/synonyms/cross-language equivalents to decide matches.
 
-Shopper's To Buy list (id: name):
-${knownItems.map((i) => `${i.id}: ${i.name}`).join('\n')}
+Shopper's To Buy list (id: name (qty needed)):
+${knownItems.map((i) => `${i.id}: ${i.name} (qty needed: ${i.qty === null || i.qty === undefined ? 1 : i.qty})`).join('\n')}
 
 Receipt line items:
 ${receiptLines.map((l, idx) => `${idx}: ${l.name} (RM${l.price})`).join('\n')}
 
 Rules:
-- Each receipt line should match AT MOST ONE list item, and each list item should be matched by
-  AT MOST ONE receipt line (one-to-one — never reuse a list item id for two different receipt lines).
+- Each receipt line should match AT MOST ONE list item.
+- A list item CAN be matched by MORE THAN ONE receipt line if, and only if, its "qty needed" is
+  greater than 1 — e.g. a list item like "Ayam" with qty needed 2 (because it was requested by
+  two different family members and combined into one list entry) can legitimately correspond to
+  TWO separate receipt lines (e.g. two separately-weighed chicken purchases). Never match more
+  receipt lines to a list item than its stated "qty needed".
 - If a receipt line clearly corresponds to a list item, set "matchedItemId" to that item's id.
-- If a receipt line has no reasonable corresponding list item, set "matchedItemId" to null.
+- If a receipt line has no reasonable corresponding list item, or the list item's qty needed is
+  already fully accounted for by other receipt lines, set "matchedItemId" to null.
 - Prefer confident matches over guessing — when genuinely ambiguous between two list items, return null
   rather than picking incorrectly.
 - Return one output object per receipt line, in the same order as the receipt line items above,
@@ -172,8 +184,17 @@ Output ONLY a JSON array, no markdown, no commentary.`;
     }
 
     const knownIds = new Set(knownItems.map((i) => i.id));
-    const usedIds = new Set(); // server-side dedup safety net — enforces one-match-per-list-item
-                                // even if the model's prompt-level rule slips.
+
+    // Phase 11 — server-side dedup safety net, upgraded from a one-shot Set to a per-item
+    // counter. A list item's merged qty (e.g. "Ayam" qty 2, combined from two people's
+    // requests) can legitimately be fulfilled by more than one receipt line, so the cap is now
+    // the item's own qty (floored, minimum 1) instead of a flat 1-per-item limit.
+    const capById = new Map(knownItems.map((i) => {
+      const qtyNum = Number(i.qty);
+      const cap = (!Number.isNaN(qtyNum) && qtyNum > 0) ? Math.max(1, Math.floor(qtyNum)) : 1;
+      return [i.id, cap];
+    }));
+    const usedCounts = new Map();
 
     const matches = [];
     const extras = [];
@@ -184,8 +205,11 @@ Output ONLY a JSON array, no markdown, no commentary.`;
       if (!receiptName || Number.isNaN(price)) return;
 
       const claimedId = typeof r.matchedItemId === 'string' ? r.matchedItemId : null;
-      if (claimedId && knownIds.has(claimedId) && !usedIds.has(claimedId)) {
-        usedIds.add(claimedId);
+      const cap = claimedId ? (capById.get(claimedId) || 1) : 0;
+      const used = claimedId ? (usedCounts.get(claimedId) || 0) : 0;
+
+      if (claimedId && knownIds.has(claimedId) && used < cap) {
+        usedCounts.set(claimedId, used + 1);
         matches.push({ itemId: claimedId, price, receiptName });
       } else {
         extras.push({ name: receiptName, price });

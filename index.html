@@ -205,12 +205,17 @@
     </div>
   </div>
 
-  <!-- Person Modal -->
+  <!-- Person Modal — Phase 10 step 4 adds a "Share ratio" (weight) field so shared/Kongsi
+       items can be split by custom ratio instead of always evenly across everyone. Applies to
+       "Me" too (weight-only edit — name/cash advance disabled for Me since neither applies). -->
   <div id="personModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
     <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5">
       <h3 id="personModalTitle" class="font-display text-lg mb-3">Add Family Member</h3>
-      <input id="personName" type="text" placeholder="Name (e.g. Abah)" class="w-full mb-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
-      <input id="personCash" type="number" step="0.01" min="0" placeholder="Cash advance given (RM)" class="w-full mb-4 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <input id="personName" type="text" placeholder="Name (e.g. Abah)" class="w-full mb-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none disabled:opacity-50" />
+      <input id="personCash" type="number" step="0.01" min="0" placeholder="Cash advance given (RM)" class="w-full mb-2 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none disabled:opacity-50" />
+      <label class="text-[11px] uppercase tracking-wider text-troli-sub dark:text-troli-subdark">Share ratio (weight)</label>
+      <input id="personShareWeight" type="number" step="0.1" min="0" placeholder="1" class="w-full mb-1 mt-1 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+      <p class="text-[10px] text-troli-sub dark:text-troli-subdark mb-4">How much of Shared (Kongsi) items this person carries relative to others. Default 1 = equal share. e.g. set a child to 0.5, or a bigger household to 2.</p>
       <div class="flex gap-2">
         <button id="personCancelBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
         <button id="personSaveBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 troli-btn-primary font-semibold">Save</button>

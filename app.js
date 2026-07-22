@@ -26,14 +26,17 @@ const State = {
                    //   item as bought (Phase 5: To Buy / Bought tabs). Items loaded from an
                    //   older localStorage version won't have this field; treated as falsy
                    //   (i.e. still "to buy") everywhere it's read, so no migration needed.
-  people: [],      // { id, name, isMe, cashAdvance }
+  people: [],      // { id, name, isMe, cashAdvance, shareWeight } — shareWeight is Phase 10
+                   //   step 4's custom shared-split ratio (default 1 = equal share). Older
+                   //   localStorage records won't have this field; personWeight() below
+                   //   treats a missing/invalid value as 1, so no migration needed.
   adjustments: { discount: 0, rounding: 0 },
 
   load() {
     try { this.items = JSON.parse(localStorage.getItem(ITEMS_KEY)) || []; } catch (e) { this.items = []; }
     try { this.people = JSON.parse(localStorage.getItem(PEOPLE_KEY)) || null; } catch (e) { this.people = null; }
     if (!this.people || this.people.length === 0) {
-      this.people = [{ id: 'me', name: 'Me', isMe: true, cashAdvance: 0 }];
+      this.people = [{ id: 'me', name: 'Me', isMe: true, cashAdvance: 0, shareWeight: 1 }];
     }
     try { this.adjustments = JSON.parse(localStorage.getItem(ADJ_KEY)) || { discount: 0, rounding: 0 }; } catch (e) { this.adjustments = { discount: 0, rounding: 0 }; }
   },
@@ -69,14 +72,15 @@ const State = {
     if (!trimmed || trimmed.toLowerCase() === 'me' || trimmed.toLowerCase() === 'saya') return 'me';
     const existing = this.people.find(p => p.name.toLowerCase() === trimmed.toLowerCase());
     if (existing) return existing.id;
-    const newPerson = { id: uid(), name: trimmed, isMe: false, cashAdvance: 0 };
+    const newPerson = { id: uid(), name: trimmed, isMe: false, cashAdvance: 0, shareWeight: 1 };
     this.people.push(newPerson);
     this.savePeople();
     return newPerson.id;
   },
 
-  addPerson(name, cashAdvance) {
-    this.people.push({ id: uid(), name: name.trim(), isMe: false, cashAdvance: parseFloat(cashAdvance) || 0 });
+  addPerson(name, cashAdvance, shareWeight = 1) {
+    const w = parseFloat(shareWeight);
+    this.people.push({ id: uid(), name: name.trim(), isMe: false, cashAdvance: parseFloat(cashAdvance) || 0, shareWeight: (!isNaN(w) && w >= 0) ? w : 1 });
     this.savePeople();
   },
   updatePerson(id, patch) {
@@ -89,6 +93,19 @@ const State = {
     // reassign orphaned items back to Me
     this.items.forEach(i => { if (i.owner === id) i.owner = 'me'; });
     this.savePeople(); this.saveItems();
+  },
+
+  // Phase 10 step 4 — custom shared-split ratios. A person's weight determines what fraction
+  // of Shared (Kongsi) items they carry, relative to everyone else's weight (default 1 each
+  // = the old even split). Missing/zero/invalid weight (e.g. records saved before this field
+  // existed) falls back to 1 rather than breaking the split.
+  personWeight(person) {
+    const w = person ? parseFloat(person.shareWeight) : NaN;
+    return (!isNaN(w) && w >= 0) ? w : 1;
+  },
+  totalWeight() {
+    const sum = this.people.reduce((s, p) => s + this.personWeight(p), 0);
+    return sum > 0 ? sum : this.people.length; // guard against every weight being 0
   },
 
   estimatedTotal() { return this.items.reduce((s, i) => s + i.price, 0); },
@@ -105,16 +122,18 @@ const State = {
 
   // Settlement Engine ("Arahan Malas")
   settlement() {
-    const peopleCount = this.people.length;
+    const totalWeight = this.totalWeight();
     const sharedItems = this.items.filter(i => i.owner === 'shared');
     const sharedCashTotal = sharedItems.filter(i => i.paymentMode === 'cash').reduce((s, i) => s + i.price, 0);
     const sharedDigitalTotal = sharedItems.filter(i => i.paymentMode === 'digital').reduce((s, i) => s + i.price, 0);
+    const sharedGrandTotal = sharedItems.reduce((s, i) => s + i.price, 0);
 
     const results = [];
     this.people.filter(p => !p.isMe).forEach(person => {
+      const shareFraction = this.personWeight(person) / totalWeight;
       const ownItems = this.items.filter(i => i.owner === person.id);
-      const cashPortion = ownItems.filter(i => i.paymentMode === 'cash').reduce((s, i) => s + i.price, 0) + (sharedCashTotal / peopleCount);
-      const digitalPortion = ownItems.filter(i => i.paymentMode === 'digital').reduce((s, i) => s + i.price, 0) + (sharedDigitalTotal / peopleCount);
+      const cashPortion = ownItems.filter(i => i.paymentMode === 'cash').reduce((s, i) => s + i.price, 0) + (sharedCashTotal * shareFraction);
+      const digitalPortion = ownItems.filter(i => i.paymentMode === 'digital').reduce((s, i) => s + i.price, 0) + (sharedDigitalTotal * shareFraction);
 
       let cashRemaining = (person.cashAdvance || 0) - cashPortion;
       let digitalOwed = digitalPortion;
@@ -131,7 +150,7 @@ const State = {
       if (digitalOwed > 0.005) lines.push(`Collect ${fmt(digitalOwed)} via bank/QR from ${person.name}`);
       if (lines.length === 0) lines.push(`Fully settled with ${person.name} — nothing owed either way`);
 
-      results.push({ person: person.name, total: ownItems.reduce((s, i) => s + i.price, 0) + (sharedItems.reduce((s, i) => s + i.price, 0) / peopleCount), lines });
+      results.push({ person: person.name, total: ownItems.reduce((s, i) => s + i.price, 0) + (sharedGrandTotal * shareFraction), lines });
     });
 
     return results;
@@ -196,6 +215,7 @@ const el = {
   personModalTitle: document.getElementById('personModalTitle'),
   personName: document.getElementById('personName'),
   personCash: document.getElementById('personCash'),
+  personShareWeight: document.getElementById('personShareWeight'),
   personSaveBtn: document.getElementById('personSaveBtn'),
   personCancelBtn: document.getElementById('personCancelBtn'),
   settleModal: document.getElementById('settleModal'),
@@ -262,12 +282,15 @@ function renderPeopleChips() {
     const chip = document.createElement('div');
     chip.className = 'flex items-center gap-1 bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-full pl-1 pr-2 py-1 text-xs shrink-0';
 
+    // Phase 10 step 4: everyone (including "Me") is tappable now, since "Me" also needs a way
+    // to set a custom share ratio even though cash advance doesn't apply to them.
+    const weight = State.personWeight(p);
+    const weightBadge = weight !== 1 ? ` · ${weight}x` : '';
     const tapTarget = document.createElement('button');
     tapTarget.type = 'button';
     tapTarget.className = 'flex items-center gap-1 px-2 py-0.5 rounded-full active:scale-95 transition-transform';
-    tapTarget.innerHTML = `<span class="font-medium">${escapeHtml(p.name)}</span>${!p.isMe ? `<span class="text-troli-sub dark:text-troli-subdark">· ${fmt(p.cashAdvance || 0)}</span>` : ''}`;
-    if (!p.isMe) tapTarget.addEventListener('click', () => openPersonModal(p));
-    else tapTarget.disabled = true; // "Me" has no cash advance to edit here
+    tapTarget.innerHTML = `<span class="font-medium">${escapeHtml(p.name)}</span><span class="text-troli-sub dark:text-troli-subdark">${!p.isMe ? `· ${fmt(p.cashAdvance || 0)}` : ''}${weightBadge}</span>`;
+    tapTarget.addEventListener('click', () => openPersonModal(p));
     chip.appendChild(tapTarget);
 
     if (!p.isMe) {
@@ -581,11 +604,12 @@ async function checkGeminiConnection(silent = false) {
 }
 el.geminiCheckBtn.addEventListener('click', () => checkGeminiConnection(false));
 
-// ---------- People modal (add + edit — Phase 2.15) ----------
+// ---------- People modal (add + edit — Phase 2.15; share ratio — Phase 10 step 4) ----------
 // editingPersonId tracks whether the modal is creating a new person (null) or editing an
-// existing one's name/cashAdvance (their id) — previously there was no edit path at all, so a
-// mistyped or later-updated cash advance (e.g. an auto-created "Abah" from the scratchpad,
-// which always starts at RM 0.00) could never be corrected without deleting and re-adding them.
+// existing one's name/cashAdvance/shareWeight (their id) — previously there was no edit path
+// at all, so a mistyped or later-updated cash advance (e.g. an auto-created "Abah" from the
+// scratchpad, which always starts at RM 0.00) could never be corrected without deleting and
+// re-adding them.
 let editingPersonId = null;
 
 // Phase 10 step 2 — cash-advance nudge queue. Holds personIds that were just auto-created
@@ -604,11 +628,15 @@ function processCashNudgeQueue() {
 
 function openPersonModal(person, isNudge = false) {
   editingPersonId = person ? person.id : null;
+  const isMe = !!(person && person.isMe);
   el.personModalTitle.textContent = isNudge
     ? `Set cash advance for ${person.name}?`
-    : (person ? 'Edit Family Member' : 'Add Family Member');
+    : (person ? (isMe ? 'Your Share Ratio' : 'Edit Family Member') : 'Add Family Member');
   el.personName.value = person ? person.name : '';
+  el.personName.disabled = isMe; // "Me"'s name is fixed
   el.personCash.value = person ? (person.cashAdvance || 0) : '';
+  el.personCash.disabled = isMe; // cash advance doesn't apply to "Me"
+  el.personShareWeight.value = person ? State.personWeight(person) : 1;
   el.personSaveBtn.textContent = person ? 'Save Changes' : 'Save';
   el.personModal.classList.remove('hidden');
 }
@@ -620,12 +648,23 @@ el.personCancelBtn.addEventListener('click', () => {
   if (cashNudgeQueue.length) processCashNudgeQueue(); // skipping this nudge still advances to the next
 });
 el.personSaveBtn.addEventListener('click', () => {
-  const name = el.personName.value.trim();
-  if (!name) return;
+  const rawWeight = parseFloat(el.personShareWeight.value);
+  const shareWeight = (!isNaN(rawWeight) && rawWeight >= 0) ? rawWeight : 1;
+
   if (editingPersonId) {
-    State.updatePerson(editingPersonId, { name, cashAdvance: parseFloat(el.personCash.value) || 0 });
+    const existing = State.people.find(p => p.id === editingPersonId);
+    if (existing && existing.isMe) {
+      // "Me" only has a share ratio to edit here — name/cash advance fields are disabled.
+      State.updatePerson(editingPersonId, { shareWeight });
+    } else {
+      const name = el.personName.value.trim();
+      if (!name) return;
+      State.updatePerson(editingPersonId, { name, cashAdvance: parseFloat(el.personCash.value) || 0, shareWeight });
+    }
   } else {
-    State.addPerson(name, el.personCash.value);
+    const name = el.personName.value.trim();
+    if (!name) return;
+    State.addPerson(name, el.personCash.value, shareWeight);
   }
   editingPersonId = null;
   el.personModal.classList.add('hidden');
@@ -636,10 +675,14 @@ el.personSaveBtn.addEventListener('click', () => {
 // ---------- Settlement modal ----------
 el.settleBtn.addEventListener('click', () => {
   const results = State.settlement();
+  const hasCustomRatios = State.people.some(p => State.personWeight(p) !== 1);
+  const ratioNote = hasCustomRatios
+    ? `<p class="text-[11px] text-troli-green dark:text-troli-greenlight bg-troli-green/10 rounded-xl px-3 py-2 mb-3">⚖️ Shared (Kongsi) items are split by each person's custom ratio, not evenly. Tap a person chip to adjust.</p>`
+    : '';
   if (results.length === 0) {
-    el.settleBody.innerHTML = `<p class="text-sm text-troli-sub dark:text-troli-subdark">Add a family member with a cash advance to see settlement instructions.</p>`;
+    el.settleBody.innerHTML = `${ratioNote}<p class="text-sm text-troli-sub dark:text-troli-subdark">Add a family member with a cash advance to see settlement instructions.</p>`;
   } else {
-    el.settleBody.innerHTML = results.map(r => `
+    el.settleBody.innerHTML = ratioNote + results.map(r => `
       <div class="mb-4 last:mb-0">
         <p class="text-sm font-semibold mb-1">${escapeHtml(r.person)} <span class="text-troli-sub dark:text-troli-subdark font-normal">· owes ${fmt(r.total)} total</span></p>
         <ul class="space-y-1">

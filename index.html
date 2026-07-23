@@ -56,8 +56,16 @@
       <button id="clearAllBtn" type="button" class="text-[11px] uppercase tracking-wider text-troli-orange border border-troli-orange/40 rounded-full px-3 py-1.5 active:scale-95 transition-transform shrink-0">Clear</button>
     </div>
 
+    <!-- Current Trip bar — Phase 12: multi-stop shopping. Tap to switch/start a shopping
+         stop (wet market, supermarket, pharmacy, etc). Items get tagged to whichever trip is
+         active at the moment they're confirmed Bought, so spend can be tracked per stop. -->
+    <button id="currentTripBtn" type="button" class="mt-3 w-full flex items-center justify-between bg-troli-card dark:bg-troli-carddark border border-troli-rail dark:border-troli-raildark rounded-2xl px-4 py-2 text-xs active:scale-95 transition-transform">
+      <span class="flex items-center gap-1.5"><span>🏬</span><span id="currentTripName" class="font-semibold">Trip 1</span></span>
+      <span id="currentTripTotal" class="text-troli-sub dark:text-troli-subdark">RM 0.00</span>
+    </button>
+
     <!-- People chips -->
-    <div class="mt-3 flex items-center gap-2 overflow-x-auto pb-1" id="peopleChips"></div>
+    <div class="mt-2 flex items-center gap-2 overflow-x-auto pb-1" id="peopleChips"></div>
 
     <!-- Secondary actions — even 3-across grid, no horizontal scroll/clipping -->
     <div class="mt-2 grid grid-cols-3 gap-2">
@@ -87,6 +95,13 @@
         class="flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-green dark:border-troli-greenlight troli-btn-primary">To Buy</button>
       <button id="tabBoughtBtn" type="button" data-active="false"
         class="flex-1 text-xs font-semibold rounded-full px-3 py-2 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark">Bought</button>
+    </div>
+
+    <!-- Phase 12 — grouping toggle, only relevant/shown within the Bought tab: group items by
+         category (original behavior) or by which shopping trip/stop bought them. -->
+    <div id="boughtGroupToggleWrap" class="hidden flex gap-2 mb-3 -mt-1">
+      <button id="groupByCategoryBtn" type="button" data-active="true" class="flex-1 text-[11px] font-semibold rounded-full px-3 py-1.5 border border-troli-green dark:border-troli-greenlight troli-btn-primary">By Category</button>
+      <button id="groupByTripBtn" type="button" data-active="false" class="flex-1 text-[11px] font-semibold rounded-full px-3 py-1.5 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark">By Trip 🏬</button>
     </div>
 
     <div class="bg-troli-card/70 dark:bg-troli-carddark/80 border border-transparent dark:border-troli-raildark/60 rounded-3xl p-2 shadow-sm min-h-[40vh]">
@@ -222,6 +237,21 @@
         <button id="personCancelBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Cancel</button>
         <button id="personSaveBtn" type="button" class="flex-1 text-sm rounded-full px-4 py-2.5 troli-btn-primary font-semibold">Save</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Trip Modal — Phase 12: multi-stop shopping. Lists every trip/stop with item count +
+       spend, lets the user switch which one is "active", or start a brand-new stop. -->
+  <div id="tripModal" class="hidden fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-troli-card dark:bg-troli-carddark rounded-2xl p-5 max-h-[80vh] overflow-y-auto">
+      <h3 class="font-display text-lg mb-1">Shopping Trips</h3>
+      <p class="text-[11px] text-troli-sub dark:text-troli-subdark mb-3">Track spend per stop — wet market, supermarket, pharmacy, etc. Items are tagged to whichever trip is active when they're marked Bought.</p>
+      <div id="tripList" class="space-y-2 mb-4"></div>
+      <div class="flex gap-2">
+        <input id="newTripName" type="text" placeholder="New stop name (e.g. Pasar Malam)" class="flex-1 bg-troli-bg dark:bg-troli-bgdark rounded-xl px-4 py-2.5 text-sm border border-troli-rail dark:border-troli-raildark outline-none" />
+        <button id="startTripBtn" type="button" class="text-sm font-semibold troli-btn-primary rounded-xl px-4 py-2.5 shrink-0">Start</button>
+      </div>
+      <button id="tripCloseBtn" type="button" class="w-full mt-3 text-sm rounded-full px-4 py-2.5 border border-troli-rail dark:border-troli-raildark">Close</button>
     </div>
   </div>
 

@@ -6,6 +6,8 @@
 const ITEMS_KEY = 'smarttroli_items_v4';
 const PEOPLE_KEY = 'smarttroli_people_v2';
 const ADJ_KEY = 'smarttroli_adjustments_v2';
+const TRIPS_KEY = 'smarttroli_trips_v1';
+const CURRENT_TRIP_KEY = 'smarttroli_currenttrip_v1';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const fmt = (n) => `RM ${(Math.round((n + Number.EPSILON) * 100) / 100).toFixed(2)}`;
@@ -22,15 +24,20 @@ function normalizeQty(q) {
 // ---------- STATE ----------
 const State = {
   items: [],       // { id, name, qty (number|null), unit, price, category, inTrolley, owner,
-                   //   paymentMode, scanned } — scanned=true means a receipt confirmed this
-                   //   item as bought (Phase 5: To Buy / Bought tabs). Items loaded from an
-                   //   older localStorage version won't have this field; treated as falsy
-                   //   (i.e. still "to buy") everywhere it's read, so no migration needed.
+                   //   paymentMode, scanned, tripId } — scanned=true means a receipt/manual
+                   //   confirmation marked this item as bought (Phase 5: To Buy / Bought
+                   //   tabs). tripId (Phase 12) tags WHICH shopping stop an item was bought
+                   //   at, so spend can be tracked per store across a multi-stop shopping
+                   //   session, e.g. wet market vs supermarket vs pharmacy. Items loaded from
+                   //   an older localStorage version won't have scanned/tripId; both are
+                   //   treated as falsy/null everywhere they're read, so no migration needed.
   people: [],      // { id, name, isMe, cashAdvance, shareWeight } — shareWeight is Phase 10
                    //   step 4's custom shared-split ratio (default 1 = equal share). Older
                    //   localStorage records won't have this field; personWeight() below
                    //   treats a missing/invalid value as 1, so no migration needed.
   adjustments: { discount: 0, rounding: 0 },
+  trips: [],       // { id, name, createdAt } — Phase 12 shopping stops/trips.
+  currentTripId: null,
 
   load() {
     try { this.items = JSON.parse(localStorage.getItem(ITEMS_KEY)) || []; } catch (e) { this.items = []; }
@@ -39,10 +46,27 @@ const State = {
       this.people = [{ id: 'me', name: 'Me', isMe: true, cashAdvance: 0, shareWeight: 1 }];
     }
     try { this.adjustments = JSON.parse(localStorage.getItem(ADJ_KEY)) || { discount: 0, rounding: 0 }; } catch (e) { this.adjustments = { discount: 0, rounding: 0 }; }
+
+    // Phase 12 — Trips. A brand-new install (or an existing install upgrading from a pre-
+    // Phase-12 build) has no trips saved yet; auto-create one default trip so the app keeps
+    // working exactly as before with zero setup — the trip concept is additive, not a forced
+    // new step before shopping can start.
+    try { this.trips = JSON.parse(localStorage.getItem(TRIPS_KEY)) || []; } catch (e) { this.trips = []; }
+    if (!this.trips || this.trips.length === 0) {
+      this.trips = [{ id: uid(), name: 'Trip 1', createdAt: Date.now() }];
+      this.saveTrips();
+    }
+    this.currentTripId = localStorage.getItem(CURRENT_TRIP_KEY) || null;
+    if (!this.currentTripId || !this.trips.some(t => t.id === this.currentTripId)) {
+      this.currentTripId = this.trips[0].id;
+      this.saveCurrentTrip();
+    }
   },
   saveItems() { localStorage.setItem(ITEMS_KEY, JSON.stringify(this.items)); },
   savePeople() { localStorage.setItem(PEOPLE_KEY, JSON.stringify(this.people)); },
   saveAdj() { localStorage.setItem(ADJ_KEY, JSON.stringify(this.adjustments)); },
+  saveTrips() { localStorage.setItem(TRIPS_KEY, JSON.stringify(this.trips)); },
+  saveCurrentTrip() { localStorage.setItem(CURRENT_TRIP_KEY, this.currentTripId); },
 
   addItem(name, price = 0, owner = 'me', paymentMode = 'cash', qty = 1, unit = '', category = '', scanned = false) {
     this.items.push({
@@ -55,7 +79,8 @@ const State = {
       inTrolley: false,
       owner,
       paymentMode,
-      scanned: !!scanned
+      scanned: !!scanned,
+      tripId: null // Phase 12 — only tagged once the item is actually confirmed bought
     });
     this.saveItems();
   },
@@ -106,6 +131,36 @@ const State = {
   totalWeight() {
     const sum = this.people.reduce((s, p) => s + this.personWeight(p), 0);
     return sum > 0 ? sum : this.people.length; // guard against every weight being 0
+  },
+
+  // ---------- Phase 12 — Multi-stop shopping (trips) ----------
+  // A single shopping session often spans several physical stops (wet market, then
+  // supermarket, then pharmacy). Trips let spend be tracked per stop instead of only as one
+  // combined blob — items get tagged with whichever trip is "current" at the moment they're
+  // confirmed bought (via receipt scan OR manual Mark-as-Bought), not when first added to the
+  // list (since at add-time you don't yet know which stop will actually have it in stock).
+  startTrip(name) {
+    const trip = { id: uid(), name: (name || '').trim() || `Trip ${this.trips.length + 1}`, createdAt: Date.now() };
+    this.trips.push(trip);
+    this.currentTripId = trip.id;
+    this.saveTrips();
+    this.saveCurrentTrip();
+    return trip;
+  },
+  switchTrip(id) {
+    if (this.trips.some(t => t.id === id)) {
+      this.currentTripId = id;
+      this.saveCurrentTrip();
+    }
+  },
+  currentTrip() {
+    return this.trips.find(t => t.id === this.currentTripId) || this.trips[0];
+  },
+  tripTotal(tripId) {
+    return this.items.filter(i => i.tripId === tripId).reduce((s, i) => s + i.price, 0);
+  },
+  tripItemCount(tripId) {
+    return this.items.filter(i => i.tripId === tripId && i.scanned).length;
   },
 
   estimatedTotal() { return this.items.reduce((s, i) => s + i.price, 0); },
@@ -173,6 +228,9 @@ const el = {
   itemCount: document.getElementById('itemCount'),
   tabToBuyBtn: document.getElementById('tabToBuyBtn'),
   tabBoughtBtn: document.getElementById('tabBoughtBtn'),
+  boughtGroupToggleWrap: document.getElementById('boughtGroupToggleWrap'),
+  groupByCategoryBtn: document.getElementById('groupByCategoryBtn'),
+  groupByTripBtn: document.getElementById('groupByTripBtn'),
   clearAllBtn: document.getElementById('clearAllBtn'),
   cashInHand: document.getElementById('cashInHand'),
   digitalOwed: document.getElementById('digitalOwed'),
@@ -241,6 +299,14 @@ const el = {
   adjustRounding: document.getElementById('adjustRounding'),
   adjustSaveBtn: document.getElementById('adjustSaveBtn'),
   adjustCancelBtn: document.getElementById('adjustCancelBtn'),
+  currentTripBtn: document.getElementById('currentTripBtn'),
+  currentTripName: document.getElementById('currentTripName'),
+  currentTripTotal: document.getElementById('currentTripTotal'),
+  tripModal: document.getElementById('tripModal'),
+  tripList: document.getElementById('tripList'),
+  newTripName: document.getElementById('newTripName'),
+  startTripBtn: document.getElementById('startTripBtn'),
+  tripCloseBtn: document.getElementById('tripCloseBtn'),
   geminiDot: document.getElementById('geminiDot'),
   geminiCheckBtn: document.getElementById('geminiCheckBtn'),
   toastEl: document.getElementById('appToast'),
@@ -309,6 +375,52 @@ function renderPeopleChips() {
   });
 }
 
+// ---------- Phase 12 — Trip bar + Trip modal ----------
+function renderCurrentTripBar() {
+  const trip = State.currentTrip();
+  if (!trip) return;
+  el.currentTripName.textContent = trip.name;
+  el.currentTripTotal.textContent = fmt(State.tripTotal(trip.id));
+}
+
+function renderTripList() {
+  // Newest trip first so the most likely "current stop" is at the top of the list.
+  const sorted = [...State.trips].sort((a, b) => b.createdAt - a.createdAt);
+  el.tripList.innerHTML = sorted.map(t => {
+    const isActive = t.id === State.currentTripId;
+    const total = State.tripTotal(t.id);
+    const count = State.tripItemCount(t.id);
+    return `<button type="button" data-trip-id="${t.id}" class="tripRow w-full text-left flex items-center justify-between rounded-xl px-3 py-2.5 border active:scale-95 transition-transform ${isActive ? 'border-troli-green dark:border-troli-greenlight bg-troli-green/10' : 'border-troli-rail dark:border-troli-raildark'}">
+      <span class="text-sm font-medium">${escapeHtml(t.name)}${isActive ? ' <span class="text-[10px] text-troli-green dark:text-troli-greenlight font-semibold uppercase tracking-wide">· Active</span>' : ''}</span>
+      <span class="text-xs text-troli-sub dark:text-troli-subdark shrink-0">${count} item${count === 1 ? '' : 's'} · ${fmt(total)}</span>
+    </button>`;
+  }).join('');
+
+  el.tripList.querySelectorAll('.tripRow').forEach(btn => {
+    btn.addEventListener('click', () => {
+      State.switchTrip(btn.dataset.tripId);
+      renderTripList();
+      renderCurrentTripBar();
+      toast(`Switched to "${State.currentTrip().name}"`, 'info');
+    });
+  });
+}
+
+el.currentTripBtn.addEventListener('click', () => {
+  renderTripList();
+  el.tripModal.classList.remove('hidden');
+});
+el.tripCloseBtn.addEventListener('click', () => el.tripModal.classList.add('hidden'));
+el.startTripBtn.addEventListener('click', () => {
+  const name = el.newTripName.value.trim();
+  if (!name) { toast('Enter a name for the new stop', 'error'); return; }
+  State.startTrip(name);
+  el.newTripName.value = '';
+  renderTripList();
+  renderCurrentTripBar();
+  toast(`Started new trip: ${name}`, 'success');
+});
+
 function renderItem(item) {
   const li = document.createElement('li');
   li.className = 'relative overflow-hidden rounded-2xl border border-troli-rail dark:border-troli-raildark';
@@ -365,10 +477,11 @@ function renderItem(item) {
   const undoBtn = li.querySelector('.undoBtn');
   if (undoBtn) undoBtn.addEventListener('click', () => {
     // Phase 10 step 1 — sends a mis-scanned/incorrectly-matched Bought item back to To Buy.
-    // Only the receipt-derived state (scanned + inTrolley) is reset — name/price/qty/owner
-    // are left as-is, since that data is still valid and the user may want to keep or edit it
-    // from the To Buy tab (e.g. via the normal Edit action) rather than losing it outright.
-    State.updateItem(item.id, { scanned: false, inTrolley: false });
+    // Only the receipt-derived state (scanned + inTrolley + Phase 12's tripId) is reset —
+    // name/price/qty/owner are left as-is, since that data is still valid and the user may
+    // want to keep or edit it from the To Buy tab (e.g. via the normal Edit action) rather
+    // than losing it outright.
+    State.updateItem(item.id, { scanned: false, inTrolley: false, tripId: null });
     renderAll();
     toast(`${item.name} sent back to To Buy`, 'info');
   });
@@ -439,7 +552,8 @@ el.editSaveBtn.addEventListener('click', () => {
 // Not every purchase produces a receipt (pasar malam / wet-market stalls, informal cash buys,
 // etc). Previously the ONLY way an item moved from To Buy to Bought was via a receipt scan
 // match. This lets the user manually confirm a To Buy item was bought and record its price,
-// without needing a receipt at all.
+// without needing a receipt at all. Phase 12: also tags the item to whichever trip is
+// currently active, exactly like a receipt-scanned match does.
 let markBoughtId = null;
 
 function openMarkBoughtModal(item) {
@@ -459,7 +573,7 @@ el.markBoughtSaveBtn.addEventListener('click', () => {
   if (!markBoughtId) return;
   const price = parseFloat(el.markBoughtPrice.value) || 0;
   const item = State.items.find(i => i.id === markBoughtId);
-  State.updateItem(markBoughtId, { price, scanned: true, inTrolley: true });
+  State.updateItem(markBoughtId, { price, scanned: true, inTrolley: true, tripId: State.currentTripId });
   markBoughtId = null;
   el.markBoughtModal.classList.add('hidden');
   renderAll();
@@ -480,6 +594,7 @@ const CATEGORY_COLORS = {
   'Lain-lain': '#9FB0A6'           // neutral sub
 };
 function categoryColor(cat) { return CATEGORY_COLORS[cat] || '#9FB0A6'; }
+const TRIP_GROUP_COLOR = '#5EB4E8'; // Phase 12 — single consistent accent for trip headers
 
 function sortedCategories(categories) {
   return categories.sort((a, b) => {
@@ -494,6 +609,24 @@ function sortedCategories(categories) {
 // currentTab drives which half of the list is shown: 'tobuy' = !item.scanned,
 // 'bought' = item.scanned. See CLAUDE_STATE.md "To Buy / Bought tabs" for the full rationale.
 let currentTab = 'tobuy';
+
+// Phase 12 — within the Bought tab, items can be grouped either by category (original
+// behavior) or by which shopping trip/stop they were bought at.
+let boughtGroupMode = 'category';
+
+function setBoughtGroupMode(mode) {
+  boughtGroupMode = mode;
+  const isCategory = mode === 'category';
+  el.groupByCategoryBtn.className = isCategory
+    ? 'flex-1 text-[11px] font-semibold rounded-full px-3 py-1.5 border border-troli-green dark:border-troli-greenlight troli-btn-primary'
+    : 'flex-1 text-[11px] font-semibold rounded-full px-3 py-1.5 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
+  el.groupByTripBtn.className = !isCategory
+    ? 'flex-1 text-[11px] font-semibold rounded-full px-3 py-1.5 border border-troli-green dark:border-troli-greenlight troli-btn-primary'
+    : 'flex-1 text-[11px] font-semibold rounded-full px-3 py-1.5 border border-troli-rail dark:border-troli-raildark bg-troli-card dark:bg-troli-carddark';
+  renderAll();
+}
+el.groupByCategoryBtn.addEventListener('click', () => setBoughtGroupMode('category'));
+el.groupByTripBtn.addEventListener('click', () => setBoughtGroupMode('trip'));
 
 function tabItems() {
   return currentTab === 'bought' ? State.items.filter(i => i.scanned) : State.items.filter(i => !i.scanned);
@@ -511,6 +644,8 @@ function setActiveTab(tab) {
   // Adding new items only makes sense while you're still shopping — the Bought tab is a
   // record of what a receipt already confirmed, not a place to stage more items.
   el.addFab.classList.toggle('hidden', !isToBuy);
+  // Phase 12 — the Category/Trip grouping toggle only makes sense once items exist in Bought.
+  el.boughtGroupToggleWrap.classList.toggle('hidden', isToBuy);
   renderAll();
 }
 el.tabToBuyBtn.addEventListener('click', () => setActiveTab('tobuy'));
@@ -533,36 +668,54 @@ function renderAll() {
   } else {
     el.empty.classList.add('hidden');
 
+    // Phase 12 — grouping key switches to trip (instead of category) only in the Bought tab
+    // when that view mode is selected. '__none__' buckets items bought before a trip was
+    // assigned (or before Phase 12 existed at all) under "Unassigned" rather than hiding them.
+    const isTripView = currentTab === 'bought' && boughtGroupMode === 'trip';
+
     const groups = {};
     items.forEach(i => {
-      const cat = i.category || 'Lain-lain';
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(i);
+      const key = isTripView ? (i.tripId || '__none__') : (i.category || 'Lain-lain');
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(i);
     });
-    const categoryNames = Object.keys(groups);
+    const groupKeys = Object.keys(groups);
 
     // Manually checking an item off (before it's ever gone through a receipt scan) sinks it
     // to the bottom of its category within To Buy, so the top of the list always shows what's
     // still outstanding. Stable sort preserves add-order otherwise. Bought tab intentionally
     // has no special sort — just whatever order items landed in as they got scanned/added.
     if (currentTab === 'tobuy') {
-      categoryNames.forEach(cat => {
+      groupKeys.forEach(cat => {
         groups[cat].sort((a, b) => (a.inTrolley === b.inTrolley ? 0 : a.inTrolley ? 1 : -1));
       });
     }
 
-    if (categoryNames.length <= 1) {
-      // Flat list — no point showing a single category header.
-      (groups[categoryNames[0]] || []).forEach(i => el.list.appendChild(renderItem(i)));
+    if (groupKeys.length <= 1) {
+      // Flat list — no point showing a single group header.
+      (groups[groupKeys[0]] || []).forEach(i => el.list.appendChild(renderItem(i)));
     } else {
-      sortedCategories(categoryNames).forEach(cat => {
-        const color = categoryColor(cat);
+      const orderedKeys = isTripView
+        ? groupKeys.sort((a, b) => {
+            const ta = a === '__none__' ? Infinity : (State.trips.find(t => t.id === a)?.createdAt ?? Infinity);
+            const tb = b === '__none__' ? Infinity : (State.trips.find(t => t.id === b)?.createdAt ?? Infinity);
+            return ta - tb;
+          })
+        : sortedCategories(groupKeys);
+
+      orderedKeys.forEach(key => {
+        const label = isTripView
+          ? (key === '__none__' ? 'Unassigned' : (State.trips.find(t => t.id === key)?.name || 'Unknown Trip'))
+          : key;
+        const color = isTripView ? TRIP_GROUP_COLOR : categoryColor(key);
+        const subtotal = isTripView ? ` · ${fmt(groups[key].reduce((s, i) => s + i.price, 0))}` : '';
+
         const header = document.createElement('li');
         header.className = 'sticky top-0 z-10 bg-troli-bg/95 dark:bg-troli-bgdark/95 backdrop-blur-sm text-[10px] font-semibold uppercase tracking-wider px-1 py-1.5 -mx-2 -mt-2 flex items-center gap-1.5';
         header.style.color = color;
-        header.innerHTML = `<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(cat)}`;
+        header.innerHTML = `<span class="inline-block w-2 h-2 rounded-full" style="background:${color}"></span>${escapeHtml(label)}${subtotal}`;
         el.list.appendChild(header);
-        groups[cat].forEach(i => el.list.appendChild(renderItem(i)));
+        groups[key].forEach(i => el.list.appendChild(renderItem(i)));
       });
     }
   }
@@ -576,6 +729,7 @@ function renderAll() {
 
   renderPeopleChips();
   renderOwnerOptions(el.ownerSelect, el.ownerSelect.value || 'me');
+  renderCurrentTripBar();
 }
 
 // ---------- Add item form ----------
@@ -1158,9 +1312,10 @@ async function handleReceiptFile(file) {
     // Phase 11 — GROUP matches by itemId instead of assuming one-to-one. A list item whose
     // qty was merged from multiple people's requests (e.g. "Ayam" qty 2) can legitimately be
     // fulfilled by MORE THAN ONE receipt line (e.g. 2 separate weighed chicken purchases).
-    // match-receipt.js now allows this server-side (capped at the item's own qty), so the
-    // client has to handle >1 match per itemId instead of silently only ever applying the
-    // last one via a plain forEach + updateItem overwrite.
+    // match-receipt.js allows this server-side (capped at the item's own qty), so the client
+    // has to handle >1 match per itemId instead of silently only ever applying the last one.
+    // Phase 12 — every record that becomes Bought here (the original + any clones) is tagged
+    // with State.currentTripId, so spend can be tracked per shopping stop.
     const matchGroups = {};
     matches.forEach(m => { (matchGroups[m.itemId] = matchGroups[m.itemId] || []).push(m); });
 
@@ -1177,13 +1332,13 @@ async function handleReceiptFile(file) {
           // First receipt line reuses the original record — one confirmed unit bought. The
           // receipt is ground truth for name/price; qty collapses to 1 since this record now
           // represents exactly one purchased unit.
-          State.updateItem(itemId, { name: m.receiptName || snapshot.name, price: m.price, qty: 1, scanned: true, inTrolley: true });
+          State.updateItem(itemId, { name: m.receiptName || snapshot.name, price: m.price, qty: 1, scanned: true, inTrolley: true, tripId: State.currentTripId });
         } else {
           // Additional receipt line(s) for the SAME list item — clone a new Bought record
           // instead of overwriting/losing the earlier match.
           State.addItem(m.receiptName || snapshot.name, m.price, snapshot.owner, snapshot.paymentMode, 1, snapshot.unit, snapshot.category, true);
           const cloned = State.items[State.items.length - 1];
-          State.updateItem(cloned.id, { inTrolley: true });
+          State.updateItem(cloned.id, { inTrolley: true, tripId: State.currentTripId });
         }
       });
 
@@ -1281,9 +1436,9 @@ function showReceiptResult(matches, extras, usedFallback = false) {
         // qty, mirroring how manually-added items start with price TBD instead.
         State.addItem(e.name, e.price, 'me', 'cash', null, '', '', true);
         const newItem = State.items[State.items.length - 1];
-        State.updateItem(newItem.id, { inTrolley: true });
+        State.updateItem(newItem.id, { inTrolley: true, tripId: State.currentTripId });
       } else {
-        State.updateItem(chosen, { name: e.name, price: e.price, scanned: true, inTrolley: true });
+        State.updateItem(chosen, { name: e.name, price: e.price, scanned: true, inTrolley: true, tripId: State.currentTripId });
         // That item is no longer a valid target for any other still-open extra row.
         candidates = candidates.filter(c => c.id !== chosen);
         document.querySelectorAll('.assignSelect').forEach((otherSelect) => {
@@ -1320,7 +1475,7 @@ function closeAnyModal(modalEl) {
     if (cashNudgeQueue.length) processCashNudgeQueue(); // backdrop-dismissing a nudge still advances the queue
   }
 }
-[el.personModal, el.settleModal, el.editModal, el.adjustModal, el.receiptModal, el.receiptSourceSheet, el.markBoughtModal].forEach((modalEl) => {
+[el.personModal, el.settleModal, el.editModal, el.adjustModal, el.receiptModal, el.receiptSourceSheet, el.markBoughtModal, el.tripModal].forEach((modalEl) => {
   modalEl.addEventListener('click', (e) => { if (e.target === modalEl) closeAnyModal(modalEl); });
 });
 
